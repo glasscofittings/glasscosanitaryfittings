@@ -1,0 +1,50 @@
+Security & Access Control Specifications: Glassco ERPTarget Platform: Desktop Application (Tauri v2 + Next.js 14 Static Export + Supabase PostgreSQL)  Security Model: Single-Master Pinboard with Client-Attributed Node Auditing[cite: 1, 4]Audience: Non-Technical Founders, Lead Developers, Security Auditors1. Authentication StrategyThe Big PictureBecause Glassco ERP runs on hardware inside a physical factory, standard web-based logins (where each worker types an email and password) create unnecessary friction on the production floor.Instead, the app uses a Shared Master PIN Security Gate paired with Device Node Attribution[cite: 1, 4].+-----------------------------------------------------------------+
+|                       App Startup Screen                        |
+|                                                                 |
+|   Enter Master Access PIN: [ * * * * ]                          |
+|   Terminal ID Detected:    [ PC-01 (Store Room) ]              |
+|   Operator Name:           [ Talha Ijaz         ]               |
+|                                                                 |
+|   [ Unlock Terminal ]                                           |
++-----------------------------------------------------------------+
+How It Works Under the HoodMaster Lock: When the desktop app opens on any terminal (e.g., PC-01), it presents a PIN keypad[cite: 1, 4].Session Storage: Once the valid Master PIN (configured via system environment variable) is entered, the app creates an encrypted local session valid only for that active window session[cite: 2, 4].Hardware Attribution: Every request sent from the desktop app to your Supabase cloud database automatically attaches the hardware ID (e.g., PC-01, Laptop-02) and the current operator's name[cite: 1, 2, 4].Auto-Lock Timeout: If no keyboard or mouse movement is detected for 15 minutes, the app automatically locks itself and requires the PIN to be re-entered.2. Roles & Operations MatrixTo keep Phase 1 lean and operational on factory floors, all terminals share a single permission level (Full Read/Write access across modules). However, every sensitive write operation requires an operator tag and logs a permanent audit record[cite: 1, 4].  Operational ViewPrimary FunctionWhat Workers CAN DoWhat Workers CANNOT DoSystem Dashboard[cite: 1, 4]High-level metrics & live activity log[cite: 1, 4]View stock valuations (PKR), stock trend charts, and real-time audit feeds[cite: 1, 4].Delete or modify past historical audit trail records[cite: 2, 4].Inward Gate Pass & GRN[cite: 1, 4]Receiving materials from suppliers[cite: 1, 4]Log incoming shipments, record material inspections, and convert IGPs to GRNs[cite: 1, 4].Edit or overwrite a GRN after it has been finalized into stock[cite: 2, 4].Dual Warehouses[cite: 1, 4]Stock management (WH-01 & WH-02)[cite: 1, 4]View real-time raw material and finished goods quantities and trigger manual stock adjustments[cite: 1, 4].Clear stock balances without leaving an automated process-loss reason log[cite: 1, 4].Product & BOM[cite: 1, 4]Product specs & composition ratios[cite: 1, 4]Create new product models and modify raw material Bill of Materials (BOM) formulas[cite: 1, 4].Apply retroactive BOM changes to past, historic manufacturing orders[cite: 2, 4].Labour & Attendance[cite: 1, 4]Worker roster & daily status tracking[cite: 1, 4]Register worker profiles and click to update daily attendance grid (P/A/L)[cite: 1, 4].Delete past attendance records without administrative override[cite: 2, 4].Advance Loans[cite: 1, 4]Worker loan tracking & recovery[cite: 1, 4]Issue worker loan disbursements and log direct cash/bank repayment entries[cite: 1, 4].Modify loan balance history without creating an explicit ledger entry[cite: 2, 4].GST Invoicing[cite: 1, 4]Sales invoicing (18% + 4% tax)[cite: 1, 4]Draft tax invoices, post completed invoices, and trigger direct local thermal/paper prints[cite: 1, 4].Alter invoice tax calculations or delete posted tax invoice serial numbers[cite: 2, 4].General Ledger[cite: 1, 4]Financial balance & statement reports[cite: 1, 4]View comparative Trial Balance, P&L, Balance Sheet, and post manual journal vouchers[cite: 1, 4].Post unbalanced journal entries where Debits do not equal Credits[cite: 2, 4].3. Database Row-Level Security (RLS) RulesDatabase Row-Level Security (RLS) is your database's internal security guard. Even if someone obtains direct connection credentials to your database, RLS guarantees that corrupt, invalid, or dangerous data updates are rejected at the database engine level.Policy 1: Immutable System Audit Logs (Append-Only)Plain English: Anyone can write a new audit event, but no one (not even app administrators) can modify or delete existing audit logs[cite: 2, 4].SQL Implementation:SQLALTER TABLE system_audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Allow insert of new audit records
+CREATE POLICY "Allow public audit log insertion" 
+ON system_audit_logs FOR INSERT 
+WITH CHECK (true);
+
+-- Allow reading of audit logs
+CREATE POLICY "Allow public audit log reading" 
+ON system_audit_logs FOR SELECT 
+USING (true);
+
+-- Explicitly disallow UPDATE and DELETE
+CREATE POLICY "Prevent audit log modification" 
+ON system_audit_logs FOR UPDATE 
+USING (false);
+
+CREATE POLICY "Prevent audit log deletion" 
+ON system_audit_logs FOR DELETE 
+USING (false);
+Policy 2: Strictly Balanced Journal EntriesPlain English: You cannot save an accounting entry into the database unless total Debits equal total Credits down to the exact cent[cite: 2, 4].SQL Implementation:SQLALTER TABLE journal_entries ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Enforce balanced journal entries" 
+ON journal_entries FOR INSERT 
+WITH CHECK (is_balanced = true);
+Policy 3: Negative Stock Prevention EnginePlain English: The database will block any transaction that tries to draw raw material stock below 0.00[cite: 2, 4].SQL Implementation:SQLALTER TABLE inventory_balances ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Prevent negative warehouse balances" 
+ON inventory_balances FOR UPDATE 
+USING (current_qty >= 0.0000);
+4. Error Handling GuideWhen something goes wrong on the factory floor, the application must handle the failure gracefully without crashing, losing data, or confusing non-technical operators.+-----------------------------------------------------------------+
+|                        System Warning                           |
+|                                                                 |
+|  [!] Internet Connection Interrupted                            |
+|                                                                 |
+|  Your action has been saved locally on [PC-01] and will         |
+|  automatically sync to the cloud once connectivity resumes.     |
+|                                                                 |
+|  [ Retrying Sync... ]                       [ Continue Offline ]|
++-----------------------------------------------------------------+
+Failure PointWhy It HappensUser-Facing MessageAutomated System BehaviorNetwork Outage / DisconnectionWi-Fi or local router connection fails during operation.  "Internet connection lost. Changes on this terminal are saved locally and will auto-sync upon reconnection."Application shifts into Offline Mode. Read-only data stays accessible from local cache; pending writes enter a local queue.  Database Sync ConflictTwo terminals (PC-01 and PC-02) try to edit the same record at the exact same millisecond.  "Stock balance was updated on another terminal. Data has been refreshed to show the latest figures."System applies a Last-Write-Wins strategy with an automated audit log entry detailing both terminal inputs[cite: 2, 4].Invalid Master PINOperator enters an incorrect PIN on the startup screen[cite: 1, 4]."Incorrect Security PIN. Please verify and try again."Triggers a 3-second UI lockout delay to stop brute-force guessing attempts.  Unbalanced Journal VoucherManual debit and credit entries do not match when submitting a transaction[cite: 2, 4]."Cannot post entry: Total Debits (PKR X) must equal Total Credits (PKR Y)."Rejects database submission and highlights the exact difference in crimson text[cite: 2, 4].Printer Hardware ErrorThe local USB receipt printer runs out of paper or is disconnected during GST invoicing[cite: 1, 4]."Invoice saved successfully, but printing failed. Check printer connection and click 'Retry Print'."Invoice remains safely posted in the database (Posted state); print action is preserved for retry[cite: 1, 4].5. Launch Security Checklist (Edge Cases to Handle)Before deploying Glassco ERP across client terminals, verify that your engineering team has addressed these specific edge cases:[ ] Unsaved Drawer Operations: If an operator opens the "Inward Gate Pass Inspection Drawer" or "New Transaction Entry Modal" and accidentally clicks outside, the system must prompt: "Discard unsaved changes?" to prevent accidental loss of complex work[cite: 1, 4].[ ] Duplicate Document Numbers: Ensure database constraints enforce uniqueness on all document codes (IGP-2026-001, GRN-2026-001, INV-2026-001) even if two staff members click "Submit" simultaneously on separate machines[cite: 2, 4].[ ] Clock Drift Across Terminals: If PC-01's system clock is 10 minutes behind PC-02, database entries could appear out of chronological order. Rule: Always use Supabase Cloud Server Time (CURRENT_TIMESTAMP) for database operations, never the local computer time.  [ ] Zero-Quantity Line Items: Block users from submitting invoices, GRNs, or BOM configurations containing zero or negative quantities[cite: 2, 4].[ ] App Launch Without Environment Config: If a fresh desktop installer is launched on a new PC without setting NEXT_PUBLIC_DEVICE_NODE_ID, the app must default to "UNCONFIGURED-NODE" and prompt for device naming during setup[cite: 2, 4].

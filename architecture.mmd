@@ -1,0 +1,497 @@
+flowchart TD
+    %% ═══════════════════════════════════════════════════════════════
+    %%  GLASSCO SANITARY ERP — FULL ARCHITECTURE DIAGRAM
+    %%  Next.js 16 App Router + Supabase + Tauri Desktop
+    %% ═══════════════════════════════════════════════════════════════
+
+    subgraph Global_Shell ["Global App Shell"]
+        direction TB
+        RootLayout["app/layout.tsx<br/>Root Layout"]
+        GlobalsCSS["globals.css<br/>Theme Tokens + Glass Components"]
+        ThemeP["ThemeProvider<br/>next-themes"]
+        QueryP["QueryProvider<br/>TanStack React Query"]
+        AuthP["AuthProvider<br/>Supabase Auth Context"]
+        SidebarP["SidebarProvider<br/>Collapse State"]
+        NetworkGuard["NetworkGuard<br/>REST + WebSocket Checks"]
+        OperatorModalG["OperatorModal<br/>Global Zustand Modal"]
+    end
+
+    subgraph Auth_Module ["Authentication & Access Control"]
+        direction TB
+        RootPage["app/page.tsx<br/>/ → redirect /login"]
+        LoginPage["login/page.tsx<br/>PIN-based Login"]
+        AuthCallback["auth/callback/route.ts<br/>OAuth Code Exchange"]
+        SupaServer["supabase/server.ts<br/>createServerClient + cookies"]
+        SupaClientAuth["supabase/client.ts<br/>createBrowserClient"]
+        SupaAuth["supabase/auth.ts<br/>fetchProfile, isOwner,<br/>isTerminal, getDeviceLabel"]
+        ProfileDD["ProfileDropdown<br/>Sign Out + Theme + Device"]
+        PinKeypad["PinKeypad<br/>PIN Entry"]
+    end
+
+    subgraph Nav_Layout ["Root & Topbar Navigation"]
+        direction TB
+        DashLayout["(dashboard)/layout.tsx<br/>Header + Sidebar + Main"]
+        Header["header.tsx<br/>Brand, Node Badge, Clock"]
+        SidebarComp["sidebar.tsx<br/>Collapsible Nav Links"]
+        DynWrapper["DynamicMainWrapper<br/>Margin Adjustment"]
+        Skeleton["RouteLoadingSkeleton<br/>Suspense Fallback"]
+    end
+
+    subgraph Dashboard_Module ["Dashboard Module"]
+        direction TB
+        DashPage["dashboard/page.tsx<br/>Executive Dashboard"]
+        KPICards["KPI Cards<br/>Stock Value | Workers<br/>Devices | Net Profit"]
+        NetProfitChart["NetProfitChart<br/>Bar Chart — Day/Week/Month"]
+        ProdConsChart["ProductionConsumptionChart<br/>Dual Line — Dispatched vs Received"]
+        AuditFeed["AuditFeedTable<br/>Real-time Audit Log"]
+    end
+
+    subgraph Sanitary_Catalog ["Sanitary Catalog & Dispatch"]
+        direction TB
+        CatalogPage["catalog/page.tsx<br/>Product Catalog"]
+        CatalogTable["SanitaryCatalogTable<br/>Product Listing + Actions"]
+        EditProductModal["EditProductModal<br/>Edit Product Form"]
+        DeliverModal["DeliverProductModal<br/>Record Dispatch"]
+        SupaCatalog["supabase/catalog.ts<br/>CRUD + computeStockAlert<br/>+ deliverProduct"]
+    end
+
+    subgraph Inventory_Module ["Inventory & Low Stock Alerts"]
+        direction TB
+        InvPage["inventory/page.tsx<br/>Warehouse Inventory"]
+        InvTable["InventoryTable<br/>Lot Listing + QC Status"]
+        AddLotModal["AddInventoryLotModal<br/>New Lot Entry"]
+        AdjustModal["StockAdjustmentModal<br/>Damaged / Expired / Audit"]
+        DonutChart["WarehouseDonutChart<br/>Stock Distribution"]
+        SupaInventory["supabase/inventory.ts<br/>fetchWarehouseLots<br/>insertInventoryLot<br/>adjustStock"]
+    end
+
+    subgraph Procurement_Module ["Procurement — IGP / GRN Flow"]
+        direction TB
+        ProcPage["procurement/page.tsx<br/>IGP Management"]
+        IGPTable["IGPTable<br/>Gate Pass Listing"]
+        InspDrawer["InspectionDrawer<br/>Accept / Reject IGP"]
+        MatIntake["MaterialIntakeDrawer<br/>New IGP Form"]
+        SupaProcurement["supabase/procurement.ts<br/>submitIGP<br/>convertIGPToGRN<br/>rejectIGP"]
+    end
+
+    subgraph Invoicing_Module ["Tax Invoicing & Side Preview"]
+        direction TB
+        InvPage2["invoicing/page.tsx<br/>GST Invoicing"]
+        InvGenerator["InvoiceGenerator<br/>Line Items + Tax"]
+        InvTable2["InvoicesTable<br/>Invoice Listing"]
+        PostPrint["PostPrintDrawer<br/>Post + Thermal Print"]
+        PreviewDrawer["InvoicePreviewDrawer<br/>HTML Preview + Post"]
+        OGP["OutwardGatePass<br/>Dispatch Document"]
+        AddCust["AddCustomerModal<br/>New Customer"]
+        GSTForm["GSTInvoiceForm<br/>Tax Breakdown"]
+        SupaInvoicing["supabase/invoicing.ts<br/>createInvoice<br/>postGSTPaintsInvoice<br/>postInvoiceWithLedger<br/>generateInvoiceHTML<br/>triggerPrint"]
+    end
+
+    subgraph Ledger_Module ["General Ledger & Accounting"]
+        direction TB
+        LedgerPage["ledger/page.tsx<br/>Double-Entry Accounting"]
+        NewJournal["NewJournalEntryModal<br/>Create JE"]
+        JourVoucher["JournalVoucherModal<br/>Voucher Entry"]
+        TxEntry["TransactionEntryModal<br/>Transaction Lines"]
+        AcctManager["AccountManager<br/>Chart of Accounts CRUD"]
+        TrialBal["TrialBalance<br/>Account Totals"]
+        PnL["ProfitLoss<br/>Revenue - Expenses"]
+        BalSheet["BalanceSheet<br/>Assets = Liab + Equity"]
+        SupaLedger["supabase/ledger.ts<br/>fetchJournalEntries<br/>createJournalEntry<br/>computeTrialBalance<br/>computePL<br/>fetchFinancialStatements"]
+    end
+
+    subgraph Labour_Module ["Labour — Workers, Attendance & Loans"]
+        direction TB
+        LabourPage["labour/page.tsx<br/>Worker Management"]
+        WorkerRoster["WorkerRoster<br/>Worker List + Summary"]
+        AttCalendar["AttendanceCalendarGrid<br/>Monthly P/A/L Toggle"]
+        WeekTimesheet["WeeklyTimesheet<br/>Weekly View"]
+        CreateWorker["CreateWorkerModal<br/>New Worker"]
+        EditWorker["EditWorkerModal<br/>Edit Worker"]
+        TaskPanel["TaskAssignmentPanel<br/>Task Board"]
+        LoanTrack["LoanTrackingPanel<br/>Loan Balance + Repay"]
+        LoanLedger["LoanLedgerModal<br/>Full Loan History"]
+        IssueLoan["IssueLoanModal<br/>Issue New Loan"]
+        SupaLabour["supabase/labour.ts<br/>fetchWorkers<br/>fetchAttendance<br/>upsertAttendance<br/>createWorker<br/>issueLoan"]
+        SupaLoans["supabase/loans.ts<br/>fetchLoans<br/>recordRepayment"]
+    end
+
+    subgraph BOM_Formulas ["BOM & Production Formulas"]
+        direction TB
+        BOMPage["bom/page.tsx<br/>Bill of Materials"]
+        FormulaPage["formulas/page.tsx<br/>Production Execution"]
+        ProdCatTable["ProductCatalogTable<br/>Products + BOM Status"]
+        BOMDrawer["BOMComposerDrawer<br/>Compose BOM"]
+        NewFormula["NewFormulaModal<br/>Create Formula"]
+        FormulaEditor["FormulaEditor<br/>Edit Formula"]
+        BatchCalc["BatchCalculator<br/>Volume Calculator"]
+        SupaBOM["supabase/bom.ts<br/>fetchBOMs<br/>saveBOM<br/>executeBatchOrder<br/>fetchWH01Lots"]
+    end
+
+    subgraph QC_Module ["Quality Control"]
+        direction TB
+        QCPage["qc/page.tsx<br/>QC Inspections"]
+        QCForm["QCParameterForm<br/>Viscosity / Gravity / Opacity"]
+        SupaQC["supabase/qc.ts<br/>submitQCRecord<br/>fetchLotOptions<br/>flagLotStatus"]
+    end
+
+    subgraph Settings_Backups ["Settings & Backups"]
+        direction TB
+        BackupPage["settings/backups/page.tsx<br/>Backup Manager"]
+        BackupExporter["backup-exporter.ts<br/>Tauri / Web Download"]
+        PDFExporter["pdf-exporter.ts<br/>jsPDF Report"]
+    end
+
+    subgraph State_Hooks ["Zustand Stores & Custom Hooks"]
+        direction TB
+        DevStore["useDeviceStore<br/>nodeId, fetchNodeId()"]
+        NetStore["useNetworkStore<br/>isOnline, realtimeStatus"]
+        OpStore["useOperatorStore<br/>Promise-based Modal"]
+        CDC["useSupabaseCDC<br/>WebSocket INSERT Listener"]
+        IdleTimeout["useIdleTimeout<br/>15min Idle (no-op)"]
+        TauriBridge["tauri-bridge.ts<br/>getHardwareNodeId<br/>printPdfDocument"]
+    end
+
+    subgraph Supabase_Backend ["Database & RPC Functions"]
+        direction TB
+        DB_Audit["system_audit_logs<br/>INSERT + Realtime CDC"]
+        DB_Workers["workers<br/>status = ACTIVE"]
+        DB_InventLots["inventory_lots<br/>remaining_qty, unit_cost_pkr"]
+        DB_InventBal["inventory_balances<br/>current_qty"]
+        DB_ProdMaster["products_master<br/>item_type, sku"]
+        DB_JournalEnt["journal_entries<br/>status = POSTED"]
+        DB_JournalLines["journal_lines<br/>debit_pkr, credit_pkr"]
+        DB_AcctsChart["accounts_chart<br/>ASSET | LIABILITY | ..."]
+        DB_Sanitary["sanitary_products<br/>available_stock"]
+        DB_Deliveries["product_deliveries<br/>quantity_delivered"]
+        DB_IGP["inward_gate_passes<br/>status = PENDING / CONVERTED"]
+        DB_GRN["goods_received_notes<br/>accepted_qty, total_value"]
+        DB_Invoices["sales_invoices<br/>total_invoice_value_pkr"]
+        DB_Parties["parties<br/>SUPPLIER | CUSTOMER"]
+        DB_Warehouses["inventory_warehouses<br/>WH-01 | WH-02"]
+        DB_DashboardKPI["dashboard_kpis<br/>trial_balance_status"]
+        DB_WorkerAttend["worker_attendance<br/>status P / A / L"]
+        DB_WorkerLoans["worker_loans<br/>current_balance"]
+        DB_LoanRepay["loan_repayment_logs<br/>amount_paid"]
+        DB_BatchOrders["batch_orders<br/>formula execution"]
+    end
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  GLOBAL SHELL → PROVIDERS → LAYOUT
+    %% ═══════════════════════════════════════════════════════════════
+
+    RootLayout --> ThemeP
+    RootLayout --> QueryP
+    RootLayout --> AuthP
+    RootLayout --> SidebarP
+    RootLayout --> NetworkGuard
+    RootLayout --> OperatorModalG
+    RootLayout --> GlobalsCSS
+
+    AuthP -. createClient .-> SupaClientAuth
+    AuthP -. fetchProfile .-> SupaAuth
+    NetworkGuard -. setRealtimeStatus .-> NetStore
+    NetworkGuard -. REST ping .-> SupaClientAuth
+    NetworkGuard -. nodeId .-> DevStore
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  AUTH MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    RootPage -->|redirect| LoginPage
+    LoginPage --> PinKeypad
+    LoginPage -. createClient .-> SupaClientAuth
+    LoginPage -. signIn .-> DB_Workers
+    AuthCallback -. exchange code .-> SupaServer
+    ProfileDD -. useAuth .-> AuthP
+    ProfileDD -. getDeviceLabel .-> SupaAuth
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  NAVIGATION LAYOUT
+    %% ═══════════════════════════════════════════════════════════════
+
+    RootLayout --> DashLayout
+    DashLayout --> Header
+    DashLayout --> SidebarComp
+    DashLayout --> DynWrapper
+    DynWrapper --> Skeleton
+
+    Header -. nodeId .-> DevStore
+    Header -. realtimeStatus .-> NetStore
+    Header -. useAuth .-> AuthP
+    Header --> ProfileDD
+    SidebarComp -. useSidebar .-> SidebarP
+    DynWrapper -. isCollapsed .-> SidebarP
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  DASHBOARD MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> DashPage
+    DashPage --> KPICards
+    DashPage --> NetProfitChart
+    DashPage --> ProdConsChart
+    DashPage --> AuditFeed
+
+    DashPage -. fetchDashboardKPIs .-> SupaClientAuth
+    DashPage -. fetchWorkerCount .-> SupaClientAuth
+    DashPage -. fetchDashboardStockValue .-> SupaClientAuth
+    DashPage -. fetchNetProfitByPeriod .-> SupaClientAuth
+    DashPage -. fetchProductionConsumption .-> SupaClientAuth
+    DashPage -. fetchAuditLogs .-> SupaClientAuth
+    DashPage -. useSupabaseCDC .-> CDC
+    DashPage -. nodeId .-> DevStore
+    DashPage -. realtimeStatus .-> NetStore
+
+    CDC -. WebSocket INSERT .-> DB_Audit
+
+    SupaClientAuth -. inventory_lots + products_master .-> DB_InventLots
+    SupaClientAuth -. workers status=ACTIVE .-> DB_Workers
+    SupaClientAuth -. journal_entries + lines + accounts .-> DB_JournalEnt
+    SupaClientAuth -. system_audit_logs .-> DB_Audit
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  CATALOG MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> CatalogPage
+    CatalogPage --> CatalogTable
+    CatalogPage --> EditProductModal
+    CatalogPage --> DeliverModal
+
+    CatalogPage -. fetchSanitaryProducts .-> SupaCatalog
+    CatalogPage -. createSanitaryProduct .-> SupaCatalog
+    CatalogPage -. deleteSanitaryProduct .-> SupaCatalog
+    CatalogTable -. computeStockAlert .-> SupaCatalog
+    EditProductModal -. updateSanitaryProduct .-> SupaCatalog
+    DeliverModal -. deliverProduct .-> SupaCatalog
+
+    SupaCatalog -. select .-> DB_Sanitary
+    SupaCatalog -. insert .-> DB_Deliveries
+    SupaCatalog -. calls deduct_product_stock RPC .-> DB_Sanitary
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  INVENTORY MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> InvPage
+    InvPage --> InvTable
+    InvPage --> AddLotModal
+    InvPage --> AdjustModal
+    InvPage --> DonutChart
+
+    InvPage -. fetchWarehouseLots .-> SupaInventory
+    InvPage -. fetchAllWarehouseStock .-> SupaInventory
+    AddLotModal -. insertInventoryLot .-> SupaInventory
+    AddLotModal -. fetchProducts .-> SupaInventory
+    AdjustModal -. adjustStock .-> SupaInventory
+
+    SupaInventory -. select + join .-> DB_InventLots
+    SupaInventory -. select .-> DB_InventBal
+    SupaInventory -. select .-> DB_ProdMaster
+    SupaInventory -. select .-> DB_Warehouses
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  PROCUREMENT MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> ProcPage
+    ProcPage --> IGPTable
+    ProcPage --> InspDrawer
+    ProcPage --> MatIntake
+
+    ProcPage -. fetchIGPsWithParties .-> SupaProcurement
+    ProcPage -. fetchParties .-> SupaProcurement
+    IGPTable -. convertIGPToGRN .-> SupaProcurement
+    InspDrawer -. convertIGPToGRN .-> SupaProcurement
+    InspDrawer -. rejectIGP .-> SupaProcurement
+    MatIntake -. submitIGP .-> SupaProcurement
+
+    SupaProcurement -. select + join .-> DB_IGP
+    SupaProcurement -. insert .-> DB_GRN
+    SupaProcurement -. insert + RPC .-> DB_InventLots
+    SupaProcurement -. select .-> DB_Parties
+    SupaProcurement -. upsert .-> DB_ProdMaster
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  INVOICING MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> InvPage2
+    InvPage2 --> InvGenerator
+    InvPage2 --> InvTable2
+    InvPage2 --> PostPrint
+    InvPage2 --> PreviewDrawer
+    InvPage2 --> OGP
+    InvGenerator --> AddCust
+
+    InvPage2 -. fetchCustomers .-> SupaInvoicing
+    InvPage2 -. fetchInvoices .-> SupaInvoicing
+    InvGenerator -. createInvoice .-> SupaInvoicing
+    InvGenerator -. checkDuplicateInvoice .-> SupaInvoicing
+    PostPrint -. postGSTPaintsInvoice .-> SupaInvoicing
+    PostPrint -. triggerPrint .-> SupaInvoicing
+    PreviewDrawer -. postInvoiceWithLedger .-> SupaInvoicing
+    PreviewDrawer -. generateInvoiceHTML .-> SupaInvoicing
+    AddCust -. createCustomer .-> SupaInvoicing
+    GSTForm -. calculateTax .-> SupaInvoicing
+    GSTForm -. createInvoice .-> SupaInvoicing
+
+    SupaInvoicing -. select + join .-> DB_Invoices
+    SupaInvoicing -. select .-> DB_Parties
+    SupaInvoicing -. deduct_product_stock RPC .-> DB_Sanitary
+    SupaInvoicing -. insert .-> DB_Deliveries
+    SupaInvoicing -. insert .-> DB_JournalEnt
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  LEDGER MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> LedgerPage
+    LedgerPage --> NewJournal
+    LedgerPage --> AcctManager
+    LedgerPage --> TrialBal
+    LedgerPage --> PnL
+    LedgerPage --> BalSheet
+
+    LedgerPage -. fetchAccounts .-> SupaLedger
+    LedgerPage -. fetchJournalEntries .-> SupaLedger
+    LedgerPage -. fetchFinancialStatements .-> SupaLedger
+    LedgerPage -. postJournalEntry .-> SupaLedger
+    NewJournal -. createJournalEntry .-> SupaLedger
+    JourVoucher -. createJournalEntry .-> SupaLedger
+    TxEntry -. createJournalEntry .-> SupaLedger
+    AcctManager -. createAccount .-> SupaLedger
+    AcctManager -. updateAccount .-> SupaLedger
+    AcctManager -. deleteAccount .-> SupaLedger
+
+    SupaLedger -. select .-> DB_AcctsChart
+    SupaLedger -. select + join lines + accounts .-> DB_JournalEnt
+    SupaLedger -. insert lines .-> DB_JournalLines
+    SupaLedger -. insert audit .-> DB_Audit
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  LABOUR MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> LabourPage
+    LabourPage --> WorkerRoster
+    LabourPage --> AttCalendar
+    LabourPage --> WeekTimesheet
+    LabourPage --> CreateWorker
+    LabourPage --> EditWorker
+    LabourPage --> TaskPanel
+    LabourPage --> LoanTrack
+    LabourPage --> LoanLedger
+
+    LabourPage -. fetchWorkers .-> SupaLabour
+    LabourPage -. fetchAttendance .-> SupaLabour
+    LabourPage -. upsertAttendance .-> SupaLabour
+    LabourPage -. buildAttendanceMap .-> SupaLabour
+    CreateWorker -. createWorker .-> SupaLabour
+    EditWorker -. updateWorker .-> SupaLabour
+    LoanTrack -. fetchWorkerLoans .-> SupaLabour
+    LoanTrack --> IssueLoan
+    IssueLoan -. issueLoan .-> SupaLabour
+    LoanLedger -. fetchLoans .-> SupaLoans
+    LoanLedger -. recordRepayment .-> SupaLoans
+
+    SupaLabour -. select is_active .-> DB_Workers
+    SupaLabour -. select + upsert .-> DB_WorkerAttend
+    SupaLabour -. insert .-> DB_WorkerLoans
+    SupaLabour -. insert audit .-> DB_Audit
+    SupaLoans -. select + join .-> DB_WorkerLoans
+    SupaLoans -. insert .-> DB_LoanRepay
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  BOM & FORMULAS MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> BOMPage
+    DashLayout --> FormulaPage
+    BOMPage --> ProdCatTable
+    BOMPage --> BOMDrawer
+    FormulaPage --> ProdCatTable
+    FormulaPage --> BOMDrawer
+    FormulaPage --> NewFormula
+    FormulaPage --> FormulaEditor
+    FormulaPage --> BatchCalc
+
+    BOMPage -. fetchProducts .-> SupaBOM
+    BOMPage -. fetchBOMs .-> SupaBOM
+    BOMDrawer -. saveBOM .-> SupaBOM
+    FormulaPage -. fetchWH01Lots .-> SupaBOM
+    FormulaPage -. executeBatchOrder .-> SupaBOM
+    NewFormula -. createProduct .-> SupaBOM
+    NewFormula -. saveBOM .-> SupaBOM
+
+    SupaBOM -. select .-> DB_ProdMaster
+    SupaBOM -. select + join .-> DB_InventLots
+    SupaBOM -. insert .-> DB_BatchOrders
+    SupaBOM -. insert audit .-> DB_Audit
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  QC MODULE
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> QCPage
+    QCPage --> QCForm
+
+    QCPage -. fetchQCRecords .-> SupaQC
+    QCPage -. fetchLotOptions .-> SupaQC
+    QCForm -. submitQCRecord .-> SupaQC
+    QCForm -. flagLotStatus .-> SupaQC
+
+    SupaQC -. select + join .-> DB_InventLots
+    SupaQC -. insert .-> DB_Audit
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  SETTINGS / BACKUPS
+    %% ═══════════════════════════════════════════════════════════════
+
+    DashLayout --> BackupPage
+    BackupPage -. exportBackupData .-> BackupExporter
+    BackupPage -. generateERPReportPDF .-> PDFExporter
+    BackupPage -. createClient .-> SupaClientAuth
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  SHARED UI COMPONENTS
+    %% ═══════════════════════════════════════════════════════════════
+
+    OperatorModalG -. reads .-> OpStore
+    PostPrint -. open() .-> OpStore
+    MatIntake -. open() .-> OpStore
+    InspDrawer -. open() .-> OpStore
+    IssueLoan -. open() .-> OpStore
+    NewFormula -. open() .-> OpStore
+
+    OpStore -. fetchWorkers .-> SupaLabour
+    OpStore -. list workers .-> DB_Workers
+
+    DevStore -. getHardwareNodeId .-> TauriBridge
+    PostPrint -. printPdfDocument .-> TauriBridge
+
+    %% ═══════════════════════════════════════════════════════════════
+    %%  NODE STYLING
+    %% ═══════════════════════════════════════════════════════════════
+
+    classDef pageStyle fill:#1e40af,color:#fff,stroke:#1e3a8a,stroke-width:2px,font-weight:bold
+    classDef layoutStyle fill:#7c3aed,color:#fff,stroke:#6d28d9,stroke-width:2px
+    classDef componentStyle fill:#0891b2,color:#fff,stroke:#0e7490,stroke-width:1px
+    classDef modalStyle fill:#d97706,color:#fff,stroke:#b45309,stroke-width:1px
+    classDef hookStyle fill:#059669,color:#fff,stroke:#047857,stroke-width:2px,font-weight:bold
+    classDef storeStyle fill:#dc2626,color:#fff,stroke:#b91c1c,stroke-width:2px,font-weight:bold
+    classDef rpcStyle fill:#9333ea,color:#fff,stroke:#7e22ce,stroke-width:2px
+    classDef dbStyle fill:#334155,color:#f8fafc,stroke:#475569,stroke-width:2px,font-weight:bold
+    classDef providerStyle fill:#0d9488,color:#fff,stroke:#0f766e,stroke-width:2px
+    classDef chartStyle fill:#e11d48,color:#fff,stroke:#be123c,stroke-width:1px
+
+    class DashPage,LoginPage,CatalogPage,InvPage,ProcPage,InvPage2,LedgerPage,LabourPage,BOMPage,FormulaPage,QCPage,BackupPage pageStyle
+    class RootLayout,DashLayout layoutStyle
+    class Header,SidebarComp,DynWrapper,Skeleton,ProfileDD,PinKeypad,IGPTable,InvTable,WorkerRoster,AttCalendar,WeekTimesheet,TaskPanel,TrialBal,PnL,BalSheet,AcctManager,InvTable2,OGP,ProdCatTable componentStyle
+    class EditProductModal,DeliverModal,AddLotModal,AdjustModal,InspDrawer,MatIntake,NewJournal,JourVoucher,TxEntry,CreateWorker,EditWorker,IssueLoan,LoanLedger,LoanTrack,RepModal,PostPrint,PreviewDrawer,AddCust,GSTForm,BOMDrawer,NewFormula,QCForm modalStyle
+    class DevStore,NetStore,OpStore,CDC,IdleTimeout storeStyle
+    class SupaClientAuth,SupaServer,SupaAuth,SupaCatalog,SupaInventory,SupaProcurement,SupaInvoicing,SupaLedger,SupaLabour,SupaLoans,SupaBOM,SupaQC hookStyle
+    class NetProfitChart,ProdConsChart,DonutChart,AuditFeed,KPICards chartStyle
+    class ThemeP,QueryP,AuthP,SidebarP,NetworkGuard,OperatorModalG providerStyle
+    class DB_Audit,DB_Workers,DB_InventLots,DB_InventBal,DB_ProdMaster,DB_JournalEnt,DB_JournalLines,DB_AcctsChart,DB_Sanitary,DB_Deliveries,DB_IGP,DB_GRN,DB_Invoices,DB_Parties,DB_Warehouses,DB_DashboardKPI,DB_WorkerAttend,DB_WorkerLoans,DB_LoanRepay,DB_BatchOrders dbStyle

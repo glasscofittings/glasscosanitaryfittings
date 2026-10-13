@@ -1,0 +1,898 @@
+{
+  "nodes": [
+    {
+      "id": "root-layout",
+      "label": "Root Layout",
+      "type": "layout",
+      "description": "App root — wraps all routes with providers and global UI shell",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "dashboard-layout",
+      "label": "Dashboard Layout",
+      "type": "layout",
+      "description": "Route group layout — Header + Sidebar + DynamicMainWrapper",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "header",
+      "label": "Header",
+      "type": "component",
+      "description": "Top bar — brand, device node badge, profile dropdown, clock",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "sidebar",
+      "label": "Sidebar",
+      "type": "component",
+      "description": "Collapsible sidebar navigation with route links",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "profile-dropdown",
+      "label": "ProfileDropdown",
+      "type": "component",
+      "description": "User profile menu — sign out, theme toggle, device label",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "network-guard",
+      "label": "NetworkGuard",
+      "type": "component",
+      "description": "Wraps app — REST/WS connectivity checks, offline lock screen",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "dynamic-main-wrapper",
+      "label": "DynamicMainWrapper",
+      "type": "component",
+      "description": "Responsive main content area — adjusts margin for collapsed sidebar",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "route-loading-skeleton",
+      "label": "RouteLoadingSkeleton",
+      "type": "component",
+      "description": "Suspense fallback loading skeleton for route transitions",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "operator-modal-global",
+      "label": "OperatorModal (Global)",
+      "type": "component",
+      "description": "Global operator confirmation modal — reads from useOperatorStore",
+      "group": "Global Layout & Navigation"
+    },
+    {
+      "id": "globals-css",
+      "label": "globals.css",
+      "type": "utility",
+      "description": "CSS custom properties, glass components, theme tokens, Tailwind v4 @theme",
+      "group": "Global Layout & Navigation"
+    },
+
+    {
+      "id": "theme-provider",
+      "label": "ThemeProvider",
+      "type": "context",
+      "description": "next-themes wrapper — dark/light mode via class + data-theme attribute",
+      "group": "Context Providers"
+    },
+    {
+      "id": "query-provider",
+      "label": "QueryProvider",
+      "type": "context",
+      "description": "TanStack React Query client provider",
+      "group": "Context Providers"
+    },
+    {
+      "id": "auth-provider",
+      "label": "AuthProvider",
+      "type": "context",
+      "description": "Supabase auth context — session, user, profile, signOut, refreshProfile",
+      "group": "Context Providers"
+    },
+    {
+      "id": "sidebar-provider",
+      "label": "SidebarProvider",
+      "type": "context",
+      "description": "Sidebar collapse state — isCollapsed, toggle()",
+      "group": "Context Providers"
+    },
+
+    {
+      "id": "use-device-store",
+      "label": "useDeviceStore",
+      "type": "utility",
+      "description": "Zustand store — nodeId, fetchNodeId() via Tauri bridge",
+      "group": "State & Hooks"
+    },
+    {
+      "id": "use-network-store",
+      "label": "useNetworkStore",
+      "type": "utility",
+      "description": "Zustand store — isOnline, isBrowserOnline, realtimeStatus",
+      "group": "State & Hooks"
+    },
+    {
+      "id": "use-operator-store",
+      "label": "useOperatorStore",
+      "type": "utility",
+      "description": "Zustand store — Promise-based operator confirmation modal",
+      "group": "State & Hooks"
+    },
+    {
+      "id": "use-supabase-cdc",
+      "label": "useSupabaseCDC",
+      "type": "utility",
+      "description": "Custom hook — raw WebSocket for system_audit_logs INSERT events",
+      "group": "State & Hooks"
+    },
+    {
+      "id": "use-idle-timeout",
+      "label": "useIdleTimeout",
+      "type": "utility",
+      "description": "Custom hook — 15-min idle timeout (currently no-op)",
+      "group": "State & Hooks"
+    },
+
+    {
+      "id": "supabase-client",
+      "label": "supabase/client.ts",
+      "type": "utility",
+      "description": "Browser Supabase client + dashboard KPI/audit/stock/profit fetch helpers",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-server",
+      "label": "supabase/server.ts",
+      "type": "utility",
+      "description": "Server-side Supabase client via createServerClient with cookie handling",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-auth",
+      "label": "supabase/auth.ts",
+      "type": "utility",
+      "description": "Profile CRUD, role checking (OWNER/TERMINAL), getDeviceLabel",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-catalog",
+      "label": "supabase/catalog.ts",
+      "type": "utility",
+      "description": "Sanitary product CRUD, stock alerts, product delivery",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-inventory",
+      "label": "supabase/inventory.ts",
+      "type": "utility",
+      "description": "Warehouse stock, inventory lots, stock adjustments",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-procurement",
+      "label": "supabase/procurement.ts",
+      "type": "utility",
+      "description": "IGP/GRN flow, party management, convert/reject IGP",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-invoicing",
+      "label": "supabase/invoicing.ts",
+      "type": "utility",
+      "description": "Invoice CRUD, GST tax calc, posting with ledger, print/HTML generation",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-ledger",
+      "label": "supabase/ledger.ts",
+      "type": "utility",
+      "description": "Journal entries, accounts chart, trial balance, P&L, balance sheet",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-labour",
+      "label": "supabase/labour.ts",
+      "type": "utility",
+      "description": "Worker CRUD, attendance, loan issuance, attendance map builder",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-loans",
+      "label": "supabase/loans.ts",
+      "type": "utility",
+      "description": "Loan fetching, repayment logging",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-bom",
+      "label": "supabase/bom.ts",
+      "type": "utility",
+      "description": "Product catalog, BOM CRUD, batch order execution, WH01 lots",
+      "group": "Supabase API Layer"
+    },
+    {
+      "id": "supabase-qc",
+      "label": "supabase/qc.ts",
+      "type": "utility",
+      "description": "QC records, lot options, submit/flag QC",
+      "group": "Supabase API Layer"
+    },
+
+    {
+      "id": "formatters",
+      "label": "formatters.ts",
+      "type": "utility",
+      "description": "formatPKR() and formatCompactPKR() — Pakistani Rupee formatting",
+      "group": "Utilities"
+    },
+    {
+      "id": "tauri-bridge",
+      "label": "tauri-bridge.ts",
+      "type": "utility",
+      "description": "Tauri IPC — getHardwareNodeId(), printPdfDocument()",
+      "group": "Utilities"
+    },
+    {
+      "id": "backup-exporter",
+      "label": "backup-exporter.ts",
+      "type": "utility",
+      "description": "Export backup data — Tauri/native file dialog or web download fallback",
+      "group": "Utilities"
+    },
+    {
+      "id": "pdf-exporter",
+      "label": "pdf-exporter.ts",
+      "type": "utility",
+      "description": "jsPDF report generation with autoTable for ERP exports",
+      "group": "Utilities"
+    },
+    {
+      "id": "types",
+      "label": "types/index.ts",
+      "type": "utility",
+      "description": "SanitaryProduct, StockAlert, ProductDelivery, SanitaryCategory types",
+      "group": "Utilities"
+    },
+
+    {
+      "id": "page-root",
+      "label": "/ (Root)",
+      "type": "page",
+      "description": "Redirects to /login",
+      "group": "Auth System"
+    },
+    {
+      "id": "page-login",
+      "label": "/login",
+      "type": "page",
+      "description": "Login page — PIN-based auth with Supabase",
+      "group": "Auth System"
+    },
+    {
+      "id": "route-auth-callback",
+      "label": "/auth/callback",
+      "type": "page",
+      "description": "OAuth callback route handler — exchanges code for session",
+      "group": "Auth System"
+    },
+
+    {
+      "id": "page-dashboard",
+      "label": "/dashboard",
+      "type": "page",
+      "description": "Executive dashboard — KPIs, profit histogram, production chart, audit feed",
+      "group": "Dashboard Module"
+    },
+    {
+      "id": "chart-net-profit",
+      "label": "NetProfitChart",
+      "type": "component",
+      "description": "Chart.js bar chart — net profit by day/week/month with range toggle",
+      "group": "Dashboard Module"
+    },
+    {
+      "id": "chart-production-consumption",
+      "label": "ProductionConsumptionChart",
+      "type": "component",
+      "description": "Chart.js dual line — dispatched (coral) vs received (ocean blue dotted)",
+      "group": "Dashboard Module"
+    },
+    {
+      "id": "audit-feed-table",
+      "label": "AuditFeedTable",
+      "type": "component",
+      "description": "Real-time audit log table — terminal node, operator, module, action, timestamp",
+      "group": "Dashboard Module"
+    },
+
+    {
+      "id": "page-catalog",
+      "label": "/catalog",
+      "type": "page",
+      "description": "Sanitary product catalog — CRUD, search, stock alerts",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "catalog-table",
+      "label": "SanitaryCatalogTable",
+      "type": "component",
+      "description": "Product table with action menu, stock alert badges",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "catalog-edit-modal",
+      "label": "EditProductModal",
+      "type": "component",
+      "description": "Edit product form — name, SKU, category, price, stock levels",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "catalog-deliver-modal",
+      "label": "DeliverProductModal",
+      "type": "component",
+      "description": "Record product delivery — customer, destination, quantity",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "page-inventory",
+      "label": "/inventory",
+      "type": "page",
+      "description": "Warehouse inventory — lot tracking, stock adjustments, donut chart",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "inventory-table",
+      "label": "InventoryTable",
+      "type": "component",
+      "description": "Warehouse lot listing with QC status badges",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "inventory-add-lot",
+      "label": "AddInventoryLotModal",
+      "type": "component",
+      "description": "Add new inventory lot — product, qty, cost, expiry",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "inventory-adjust-modal",
+      "label": "StockAdjustmentModal",
+      "type": "component",
+      "description": "Damaged/expired/audit correction stock adjustments",
+      "group": "Catalog & Inventory"
+    },
+    {
+      "id": "inventory-donut",
+      "label": "WarehouseDonutChart",
+      "type": "component",
+      "description": "Chart.js doughnut — warehouse stock distribution",
+      "group": "Catalog & Inventory"
+    },
+
+    {
+      "id": "page-procurement",
+      "label": "/procurement",
+      "type": "page",
+      "description": "IGP/GRN procurement flow — inspection, material intake",
+      "group": "Procurement Module"
+    },
+    {
+      "id": "igp-table",
+      "label": "IGPTable",
+      "type": "component",
+      "description": "Inward gate pass listing with status badges and convert action",
+      "group": "Procurement Module"
+    },
+    {
+      "id": "inspection-drawer",
+      "label": "InspectionDrawer",
+      "type": "component",
+      "description": "IGP inspection — accept/reject with qty and unit price",
+      "group": "Procurement Module"
+    },
+    {
+      "id": "material-intake-drawer",
+      "label": "MaterialIntakeDrawer",
+      "type": "component",
+      "description": "New IGP form — supplier, material, qty, lot code",
+      "group": "Procurement Module"
+    },
+    {
+      "id": "new-igp-form",
+      "label": "NewIGPForm",
+      "type": "component",
+      "description": "Alternative IGP creation form",
+      "group": "Procurement Module"
+    },
+
+    {
+      "id": "page-invoicing",
+      "label": "/invoicing",
+      "type": "page",
+      "description": "GST invoicing — create, post, print, outward gate pass",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "invoice-generator",
+      "label": "InvoiceGenerator",
+      "type": "component",
+      "description": "Invoice creation form — customer, line items, tax calculation",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "invoices-table",
+      "label": "InvoicesTable",
+      "type": "component",
+      "description": "Invoice listing with post/view actions",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "post-print-drawer",
+      "label": "PostPrintDrawer",
+      "type": "component",
+      "description": "Post invoice + trigger thermal print workflow",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "invoice-preview-drawer",
+      "label": "InvoicePreviewDrawer",
+      "type": "component",
+      "description": "Invoice HTML preview + post with ledger posting",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "outward-gate-pass",
+      "label": "OutwardGatePass",
+      "type": "component",
+      "description": "Outward gate pass document for dispatched goods",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "add-customer-modal",
+      "label": "AddCustomerModal",
+      "type": "component",
+      "description": "Create new customer party — name, NTN, contact",
+      "group": "Invoicing Module"
+    },
+    {
+      "id": "gst-invoice-form",
+      "label": "GSTInvoiceForm",
+      "type": "component",
+      "description": "Co-located GST invoice form — tax breakdown, line items",
+      "group": "Invoicing Module"
+    },
+
+    {
+      "id": "page-ledger",
+      "label": "/ledger",
+      "type": "page",
+      "description": "Double-entry accounting — journal entries, financial statements",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "new-journal-modal",
+      "label": "NewJournalEntryModal",
+      "type": "component",
+      "description": "Create journal entry — account lines, debit/credit, narration",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "journal-voucher-modal",
+      "label": "JournalVoucherModal",
+      "type": "component",
+      "description": "Journal voucher creation with PKR formatting",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "transaction-entry-modal",
+      "label": "TransactionEntryModal",
+      "type": "component",
+      "description": "Transaction entry with account line items",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "account-manager",
+      "label": "AccountManager",
+      "type": "component",
+      "description": "Chart of accounts CRUD — code, name, type",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "trial-balance",
+      "label": "TrialBalance",
+      "type": "component",
+      "description": "Trial balance table — account totals",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "profit-loss",
+      "label": "ProfitLoss",
+      "type": "component",
+      "description": "P&L statement — revenue vs expenses, net profit",
+      "group": "Ledger Module"
+    },
+    {
+      "id": "balance-sheet",
+      "label": "BalanceSheet",
+      "type": "component",
+      "description": "Balance sheet — assets = liabilities + equity",
+      "group": "Ledger Module"
+    },
+
+    {
+      "id": "page-labour",
+      "label": "/labour",
+      "type": "page",
+      "description": "Worker management — roster, attendance, tasks, loan tracking",
+      "group": "Labour Module"
+    },
+    {
+      "id": "worker-roster",
+      "label": "WorkerRoster",
+      "type": "component",
+      "description": "Worker list with attendance summary badges",
+      "group": "Labour Module"
+    },
+    {
+      "id": "attendance-calendar",
+      "label": "AttendanceCalendarGrid",
+      "type": "component",
+      "description": "Monthly attendance grid — toggle P/A/L per day",
+      "group": "Labour Module"
+    },
+    {
+      "id": "weekly-timesheet",
+      "label": "WeeklyTimesheet",
+      "type": "component",
+      "description": "Weekly timesheet view for all workers",
+      "group": "Labour Module"
+    },
+    {
+      "id": "create-worker-modal",
+      "label": "CreateWorkerModal",
+      "type": "component",
+      "description": "New worker form — name, role, salary, joining date",
+      "group": "Labour Module"
+    },
+    {
+      "id": "edit-worker-modal",
+      "label": "EditWorkerModal",
+      "type": "component",
+      "description": "Edit worker details",
+      "group": "Labour Module"
+    },
+    {
+      "id": "task-assignment-panel",
+      "label": "TaskAssignmentPanel",
+      "type": "component",
+      "description": "Task assignment for selected worker",
+      "group": "Labour Module"
+    },
+    {
+      "id": "loan-tracking-panel",
+      "label": "LoanTrackingPanel",
+      "type": "component",
+      "description": "Worker loan tracking — balance, repayments, issue new loan",
+      "group": "Labour Module"
+    },
+    {
+      "id": "loan-ledger-modal",
+      "label": "LoanLedgerModal",
+      "type": "component",
+      "description": "Full loan ledger — all loans, repayment history",
+      "group": "Labour Module"
+    },
+    {
+      "id": "issue-loan-modal",
+      "label": "IssueLoanModal",
+      "type": "component",
+      "description": "Issue new loan to worker — amount, monthly deduction, reason",
+      "group": "Labour Module"
+    },
+
+    {
+      "id": "page-bom",
+      "label": "/bom",
+      "type": "page",
+      "description": "Bill of Materials — product catalog, BOM composition",
+      "group": "BOM & Formulas"
+    },
+    {
+      "id": "product-catalog-table",
+      "label": "ProductCatalogTable",
+      "type": "component",
+      "description": "Product listing with BOM status and compose action",
+      "group": "BOM & Formulas"
+    },
+    {
+      "id": "bom-composer-drawer",
+      "label": "BOMComposerDrawer",
+      "type": "component",
+      "description": "BOM composition — raw material selection, quantities per finished good",
+      "group": "BOM & Formulas"
+    },
+    {
+      "id": "page-formulas",
+      "label": "/formulas",
+      "type": "page",
+      "description": "Production formulas — BOM execution, batch orders",
+      "group": "BOM & Formulas"
+    },
+    {
+      "id": "new-formula-modal",
+      "label": "NewFormulaModal",
+      "type": "component",
+      "description": "Create new production formula (BOM version)",
+      "group": "BOM & Formulas"
+    },
+    {
+      "id": "formula-editor",
+      "label": "FormulaEditor",
+      "type": "component",
+      "description": "Co-located formula editing component",
+      "group": "BOM & Formulas"
+    },
+    {
+      "id": "batch-calculator",
+      "label": "BatchCalculator",
+      "type": "component",
+      "description": "Co-located batch volume calculator — Zod validated",
+      "group": "BOM & Formulas"
+    },
+
+    {
+      "id": "page-qc",
+      "label": "/qc",
+      "type": "page",
+      "description": "Quality control — intake/in-process/packaging inspections",
+      "group": "QC Module"
+    },
+    {
+      "id": "qc-parameter-form",
+      "label": "QCParameterForm",
+      "type": "component",
+      "description": "QC form — viscosity, gravity, opacity, shade, seal checks",
+      "group": "QC Module"
+    },
+
+    {
+      "id": "page-loans",
+      "label": "/loans",
+      "type": "page",
+      "description": "Worker loan management — list, repay, track",
+      "group": "Loans Module"
+    },
+    {
+      "id": "repayment-modal",
+      "label": "RepaymentModal",
+      "type": "component",
+      "description": "Record loan repayment — amount, source (cash/bank/salary)",
+      "group": "Loans Module"
+    },
+
+    {
+      "id": "page-backups",
+      "label": "/settings/backups",
+      "type": "page",
+      "description": "Backup manager — export data, generate PDF reports",
+      "group": "Settings Module"
+    },
+
+    {
+      "id": "pin-keypad",
+      "label": "PinKeypad",
+      "type": "component",
+      "description": "PIN entry keypad for authentication",
+      "group": "Shared UI"
+    },
+    {
+      "id": "crimson-button",
+      "label": "CrimsonButton",
+      "type": "component",
+      "description": "Styled button — primary/ghost variants",
+      "group": "Shared UI"
+    },
+    {
+      "id": "glass-card",
+      "label": "GlassCard",
+      "type": "component",
+      "description": "Glassmorphic card container",
+      "group": "Shared UI"
+    },
+    {
+      "id": "glass-input",
+      "label": "GlassInput",
+      "type": "component",
+      "description": "Styled input with optional label",
+      "group": "Shared UI"
+    },
+    {
+      "id": "theme-toggle",
+      "label": "ThemeToggle",
+      "type": "component",
+      "description": "Dark/light mode toggle button",
+      "group": "Shared UI"
+    },
+    {
+      "id": "db-status-pill",
+      "label": "DatabaseStatusPill",
+      "type": "component",
+      "description": "Supabase connection status indicator",
+      "group": "Shared UI"
+    },
+    {
+      "id": "operator-modal-ui",
+      "label": "OperatorModal (UI)",
+      "type": "component",
+      "description": "Zustand-driven operator selection modal — reads worker list",
+      "group": "Shared UI"
+    }
+  ],
+  "edges": [
+    {"from": "root-layout", "to": "theme-provider", "label": "renders"},
+    {"from": "root-layout", "to": "query-provider", "label": "renders"},
+    {"from": "root-layout", "to": "auth-provider", "label": "renders"},
+    {"from": "root-layout", "to": "sidebar-provider", "label": "renders"},
+    {"from": "root-layout", "to": "network-guard", "label": "renders"},
+    {"from": "root-layout", "to": "operator-modal-global", "label": "renders"},
+    {"from": "root-layout", "to": "globals-css", "label": "imports"},
+
+    {"from": "theme-provider", "to": "globals-css", "label": "reads-from", "description": "next-themes toggles .dark / data-theme"},
+    {"from": "auth-provider", "to": "supabase-client", "label": "calls", "description": "createClient()"},
+    {"from": "auth-provider", "to": "supabase-auth", "label": "calls", "description": "fetchProfile()"},
+    {"from": "network-guard", "to": "use-network-store", "label": "writes-to", "description": "setRealtimeStatus(), setBrowserOnline()"},
+    {"from": "network-guard", "to": "use-device-store", "label": "reads-from", "description": "nodeId"},
+    {"from": "network-guard", "to": "supabase-client", "label": "calls", "description": "createClient() for REST ping"},
+
+    {"from": "dashboard-layout", "to": "header", "label": "renders"},
+    {"from": "dashboard-layout", "to": "sidebar", "label": "renders"},
+    {"from": "dashboard-layout", "to": "dynamic-main-wrapper", "label": "renders"},
+    {"from": "dashboard-layout", "to": "route-loading-skeleton", "label": "renders", "description": "Suspense fallback"},
+
+    {"from": "header", "to": "use-device-store", "label": "reads-from", "description": "nodeId"},
+    {"from": "header", "to": "use-network-store", "label": "reads-from", "description": "realtimeStatus, isOnline"},
+    {"from": "header", "to": "auth-provider", "label": "consumes", "description": "useAuth()"},
+    {"from": "header", "to": "profile-dropdown", "label": "renders"},
+
+    {"from": "sidebar", "to": "sidebar-provider", "label": "consumes", "description": "useSidebar() — isCollapsed, toggle"},
+    {"from": "dynamic-main-wrapper", "to": "sidebar-provider", "label": "consumes", "description": "useSidebar() — isCollapsed"},
+
+    {"from": "profile-dropdown", "to": "auth-provider", "label": "consumes", "description": "useAuth() — signOut, profile"},
+    {"from": "profile-dropdown", "to": "use-device-store", "label": "reads-from"},
+    {"from": "profile-dropdown", "to": "use-network-store", "label": "reads-from"},
+    {"from": "profile-dropdown", "to": "supabase-auth", "label": "calls", "description": "getDeviceLabel()"},
+
+    {"from": "operator-modal-global", "to": "use-operator-store", "label": "consumes"},
+    {"from": "operator-modal-ui", "to": "use-operator-store", "label": "consumes"},
+    {"from": "operator-modal-ui", "to": "supabase-labour", "label": "calls", "description": "fetchWorkers()"},
+
+    {"from": "page-root", "to": "page-login", "label": "redirects-to"},
+    {"from": "page-login", "to": "supabase-client", "label": "calls", "description": "createClient()"},
+    {"from": "route-auth-callback", "to": "supabase-server", "label": "calls", "description": "createClient() — cookie-based"},
+
+    {"from": "page-dashboard", "to": "supabase-client", "label": "calls", "description": "fetchDashboardKPIs, fetchAuditLogs, fetchWorkerCount, fetchDashboardStockValue, fetchNetProfitByPeriod, fetchProductionConsumption"},
+    {"from": "page-dashboard", "to": "use-supabase-cdc", "label": "calls", "description": "useSupabaseCDC(handleCDCInsert)"},
+    {"from": "page-dashboard", "to": "use-device-store", "label": "reads-from", "description": "nodeId"},
+    {"from": "page-dashboard", "to": "use-network-store", "label": "reads-from", "description": "realtimeStatus, isBrowserOnline"},
+    {"from": "page-dashboard", "to": "formatters", "label": "calls", "description": "formatCompactPKR, formatPKR"},
+    {"from": "page-dashboard", "to": "chart-net-profit", "label": "renders", "description": "passes data, range, onRangeChange"},
+    {"from": "page-dashboard", "to": "chart-production-consumption", "label": "renders", "description": "passes data"},
+    {"from": "page-dashboard", "to": "audit-feed-table", "label": "renders", "description": "passes logs, newIds"},
+    {"from": "use-supabase-cdc", "to": "use-network-store", "label": "writes-to", "description": "setRealtimeStatus"},
+
+    {"from": "chart-net-profit", "to": "supabase-client", "label": "reads-from", "description": "PeriodNetProfit type"},
+    {"from": "chart-production-consumption", "to": "supabase-client", "label": "reads-from", "description": "ProductionConsumptionPoint type"},
+    {"from": "audit-feed-table", "to": "supabase-client", "label": "reads-from", "description": "AuditLog type"},
+
+    {"from": "page-catalog", "to": "supabase-catalog", "label": "calls", "description": "fetchSanitaryProducts, createSanitaryProduct, deleteSanitaryProduct"},
+    {"from": "page-catalog", "to": "types", "label": "reads-from", "description": "SanitaryProduct, SANITARY_CATEGORIES"},
+    {"from": "page-catalog", "to": "catalog-table", "label": "renders"},
+    {"from": "page-catalog", "to": "catalog-edit-modal", "label": "renders"},
+    {"from": "page-catalog", "to": "catalog-deliver-modal", "label": "renders"},
+    {"from": "catalog-table", "to": "supabase-catalog", "label": "calls", "description": "computeStockAlert"},
+    {"from": "catalog-edit-modal", "to": "supabase-catalog", "label": "calls", "description": "updateSanitaryProduct"},
+    {"from": "catalog-deliver-modal", "to": "supabase-catalog", "label": "calls", "description": "deliverProduct, searchSanitaryProducts"},
+
+    {"from": "page-inventory", "to": "supabase-inventory", "label": "calls", "description": "fetchWarehouseLots, fetchAllWarehouseStock"},
+    {"from": "page-inventory", "to": "inventory-table", "label": "renders"},
+    {"from": "page-inventory", "to": "inventory-add-lot", "label": "renders"},
+    {"from": "page-inventory", "to": "inventory-adjust-modal", "label": "renders"},
+    {"from": "page-inventory", "to": "inventory-donut", "label": "renders"},
+    {"from": "inventory-add-lot", "to": "supabase-inventory", "label": "calls", "description": "insertInventoryLot, fetchProducts, fetchWarehouseId"},
+    {"from": "inventory-adjust-modal", "to": "supabase-inventory", "label": "calls", "description": "adjustStock"},
+
+    {"from": "page-procurement", "to": "supabase-procurement", "label": "calls", "description": "fetchIGPsWithParties, fetchParties"},
+    {"from": "page-procurement", "to": "igp-table", "label": "renders"},
+    {"from": "page-procurement", "to": "inspection-drawer", "label": "renders"},
+    {"from": "page-procurement", "to": "material-intake-drawer", "label": "renders"},
+    {"from": "igp-table", "to": "supabase-procurement", "label": "calls", "description": "convertIGPToGRN"},
+    {"from": "igp-table", "to": "use-operator-store", "label": "calls", "description": "open() for operator attribution"},
+    {"from": "igp-table", "to": "use-device-store", "label": "reads-from"},
+    {"from": "inspection-drawer", "to": "supabase-procurement", "label": "calls", "description": "convertIGPToGRN, rejectIGP"},
+    {"from": "inspection-drawer", "to": "use-operator-store", "label": "calls"},
+    {"from": "inspection-drawer", "to": "use-device-store", "label": "reads-from"},
+    {"from": "inspection-drawer", "to": "formatters", "label": "calls", "description": "formatPKR"},
+    {"from": "material-intake-drawer", "to": "supabase-procurement", "label": "calls", "description": "submitIGP"},
+    {"from": "material-intake-drawer", "to": "use-device-store", "label": "reads-from"},
+    {"from": "material-intake-drawer", "to": "use-operator-store", "label": "calls"},
+
+    {"from": "page-invoicing", "to": "supabase-invoicing", "label": "calls", "description": "fetchCustomers, fetchInvoices"},
+    {"from": "page-invoicing", "to": "invoice-generator", "label": "renders"},
+    {"from": "page-invoicing", "to": "invoices-table", "label": "renders"},
+    {"from": "page-invoicing", "to": "post-print-drawer", "label": "renders"},
+    {"from": "page-invoicing", "to": "invoice-preview-drawer", "label": "renders"},
+    {"from": "page-invoicing", "to": "outward-gate-pass", "label": "renders"},
+    {"from": "page-invoicing", "to": "formatters", "label": "calls"},
+    {"from": "invoice-generator", "to": "supabase-invoicing", "label": "calls", "description": "createInvoice, checkDuplicateInvoice"},
+    {"from": "invoice-generator", "to": "add-customer-modal", "label": "renders"},
+    {"from": "invoices-table", "to": "supabase-invoicing", "label": "reads-from", "description": "SalesInvoice type"},
+    {"from": "invoices-table", "to": "formatters", "label": "calls"},
+    {"from": "post-print-drawer", "to": "supabase-invoicing", "label": "calls", "description": "postGSTPaintsInvoice, triggerPrint, generateInvoiceHTML"},
+    {"from": "post-print-drawer", "to": "use-operator-store", "label": "calls"},
+    {"from": "invoice-preview-drawer", "to": "supabase-invoicing", "label": "calls", "description": "postInvoiceWithLedger, generateInvoiceHTML"},
+    {"from": "gst-invoice-form", "to": "supabase-invoicing", "label": "calls", "description": "calculateTax, createInvoice, postGSTPaintsInvoice"},
+    {"from": "gst-invoice-form", "to": "formatters", "label": "calls"},
+    {"from": "gst-invoice-form", "to": "use-operator-store", "label": "calls"},
+
+    {"from": "page-ledger", "to": "supabase-ledger", "label": "calls", "description": "fetchAccounts, fetchJournalEntries, fetchFinancialStatements, postJournalEntry"},
+    {"from": "page-ledger", "to": "new-journal-modal", "label": "renders"},
+    {"from": "page-ledger", "to": "formatters", "label": "calls"},
+    {"from": "new-journal-modal", "to": "supabase-ledger", "label": "calls", "description": "createJournalEntry"},
+    {"from": "journal-voucher-modal", "to": "supabase-ledger", "label": "calls", "description": "createJournalEntry"},
+    {"from": "journal-voucher-modal", "to": "formatters", "label": "calls"},
+    {"from": "transaction-entry-modal", "to": "supabase-ledger", "label": "calls", "description": "createJournalEntry"},
+    {"from": "account-manager", "to": "supabase-ledger", "label": "calls", "description": "createAccount, updateAccount, deleteAccount"},
+    {"from": "trial-balance", "to": "formatters", "label": "calls"},
+    {"from": "profit-loss", "to": "formatters", "label": "calls"},
+    {"from": "balance-sheet", "to": "formatters", "label": "calls"},
+
+    {"from": "page-labour", "to": "supabase-labour", "label": "calls", "description": "fetchWorkers, fetchAttendance, upsertAttendance, deleteWorker, buildAttendanceMap"},
+    {"from": "page-labour", "to": "worker-roster", "label": "renders"},
+    {"from": "page-labour", "to": "attendance-calendar", "label": "renders"},
+    {"from": "page-labour", "to": "weekly-timesheet", "label": "renders"},
+    {"from": "page-labour", "to": "create-worker-modal", "label": "renders"},
+    {"from": "page-labour", "to": "edit-worker-modal", "label": "renders"},
+    {"from": "page-labour", "to": "task-assignment-panel", "label": "renders"},
+    {"from": "page-labour", "to": "loan-tracking-panel", "label": "renders"},
+    {"from": "page-labour", "to": "loan-ledger-modal", "label": "renders"},
+    {"from": "create-worker-modal", "to": "supabase-labour", "label": "calls", "description": "createWorker"},
+    {"from": "edit-worker-modal", "to": "supabase-labour", "label": "calls", "description": "updateWorker"},
+    {"from": "loan-tracking-panel", "to": "supabase-labour", "label": "calls", "description": "fetchWorkerLoans"},
+    {"from": "loan-tracking-panel", "to": "supabase-loans", "label": "calls", "description": "recordRepayment"},
+    {"from": "loan-tracking-panel", "to": "issue-loan-modal", "label": "renders"},
+    {"from": "issue-loan-modal", "to": "supabase-labour", "label": "calls", "description": "issueLoan"},
+    {"from": "loan-ledger-modal", "to": "supabase-loans", "label": "calls", "description": "fetchLoans, recordRepayment"},
+
+    {"from": "page-bom", "to": "supabase-bom", "label": "calls", "description": "fetchProducts, fetchBOMs"},
+    {"from": "page-bom", "to": "product-catalog-table", "label": "renders"},
+    {"from": "page-bom", "to": "bom-composer-drawer", "label": "renders"},
+    {"from": "bom-composer-drawer", "to": "supabase-bom", "label": "calls", "description": "saveBOM"},
+
+    {"from": "page-formulas", "to": "supabase-bom", "label": "calls", "description": "fetchProducts, fetchBOMs, fetchWH01Lots, executeBatchOrder"},
+    {"from": "page-formulas", "to": "use-operator-store", "label": "calls", "description": "open() for batch execution"},
+    {"from": "page-formulas", "to": "product-catalog-table", "label": "renders"},
+    {"from": "page-formulas", "to": "bom-composer-drawer", "label": "renders"},
+    {"from": "page-formulas", "to": "new-formula-modal", "label": "renders"},
+    {"from": "new-formula-modal", "to": "supabase-bom", "label": "calls", "description": "fetchProducts, createProduct, saveBOM"},
+    {"from": "formula-editor", "to": "supabase-bom", "label": "calls", "description": "fetchProducts, fetchWH01Lots"},
+    {"from": "batch-calculator", "to": "supabase-bom", "label": "calls", "description": "fetchWH01Lots, fetchProducts"},
+
+    {"from": "page-qc", "to": "supabase-qc", "label": "calls", "description": "fetchQCRecords, fetchLotOptions"},
+    {"from": "page-qc", "to": "qc-parameter-form", "label": "renders"},
+    {"from": "qc-parameter-form", "to": "supabase-qc", "label": "calls", "description": "submitQCRecord"},
+
+    {"from": "page-loans", "to": "supabase-loans", "label": "calls", "description": "fetchLoans"},
+    {"from": "page-loans", "to": "repayment-modal", "label": "renders"},
+    {"from": "page-loans", "to": "formatters", "label": "calls"},
+    {"from": "repayment-modal", "to": "supabase-loans", "label": "calls", "description": "recordRepayment"},
+    {"from": "repayment-modal", "to": "formatters", "label": "calls"},
+
+    {"from": "page-backups", "to": "supabase-client", "label": "calls", "description": "createClient()"},
+    {"from": "page-backups", "to": "backup-exporter", "label": "calls", "description": "exportBackupData, formatBytes"},
+    {"from": "page-backups", "to": "pdf-exporter", "label": "calls", "description": "generateERPReportPDF"},
+    {"from": "page-backups", "to": "operator-modal-ui", "label": "renders"}
+  ]
+}
