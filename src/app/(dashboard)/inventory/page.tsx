@@ -438,7 +438,7 @@ function AddSanitaryProductModal({
     const { data, error: createError } = await createSanitaryProduct({
       sku: sku.trim(),
       name: name.trim(),
-      category,
+      category: category as SanitaryCategory,
       subcategory: (subcategory as SanitarySubcategory) || undefined,
       finish: finish as ProductFinish,
       unit_price: parseFloat(unitPrice) || 0,

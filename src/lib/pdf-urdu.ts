@@ -217,7 +217,6 @@ export const UR = {
 
   productCatalog: 'سینیٹری پروڈکٹ کیٹلاگ',
   sku: 'پروڈکٹ کوڈ',
-  productName: 'پروڈکٹ کا نام',
   category: 'زمرہ',
   subcategory: 'ذیلی زمرہ',
   finish: 'فنش',
@@ -439,7 +438,6 @@ export const UR = {
   quotationNo: 'کوٹیشن نمبر',
   validUntil: 'تاریخ میعاد',
   productName: 'پروڈکٹ کا نام',
-  code: 'کوڈ',
   totalQuotedAmount: 'کل رقم (کوٹیشن)',
 
   outwardGatePass: 'روانگی گیٹ پاس و ٹیکس خلاصہ',
