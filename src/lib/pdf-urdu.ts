@@ -455,6 +455,17 @@ export const UR = {
   allRecordedTransactions: 'تمام درج شدہ لین دین',
   inception: 'آغاز سے',
   presentTense: ' الحال تک',
+
+  particulars: 'تفصیلات',
+  purchaseNumber: 'خریداری نمبر',
+  rate: 'نرخ',
+  subtotal: 'ذیلی میزان',
+  discount: 'رعایت',
+  taxFreight: 'ٹیکس / کرایہ',
+  totalLanded: 'کل لینڈڈ لاگت',
+  purchaseReport: 'پرچیز رپورٹ',
+  purchaseOrders: 'خریداری آرڈرز رپورٹ',
+  expenseVoucher: 'اخراجات واؤچر',
 } as const
 
 export type UrKey = keyof typeof UR
