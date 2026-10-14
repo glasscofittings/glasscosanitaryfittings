@@ -17,14 +17,14 @@ export interface CompanyProfile {
 const STORAGE_KEY = "glassco_company_profile";
 
 export const DEFAULT_COMPANY: CompanyProfile = {
-  name: "Glassco Sanitary",
-  address: "Main G.T. Road, Gujranwala",
-  phone: "+92 55 123 4567",
+  name: "Glassco Sanitary fittings",
+  address: "race course road Main G.T. Road, Gujranwala",
+  phone: "+923000656570",
   telephone: "+92 55 325 4567",
-  email: "info@glassco.pk",
-  website: "www.glassco.pk",
-  facebook: "",
-  instagram: "",
+  email: "glasscosanitaryfittings@gmail.com",
+  website: "www.glasscosanitary.com",
+  facebook: "glasscosanitary",
+  instagram: "glasscosanitary",
   whatsapp: "",
   ntn: "1234567-8",
   logo: "",
