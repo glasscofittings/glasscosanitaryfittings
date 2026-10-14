@@ -4,7 +4,7 @@ import {
   getExportDocumentTitle,
   loadCompanyProfile,
 } from "@/lib/company-settings";
-import { REFERENCE_COMPANY_NAME, REFERENCE_EMAIL, REFERENCE_PHONE } from "@/lib/supabase/invoicing";
+import { REFERENCE_EMAIL, REFERENCE_PHONE } from "@/lib/supabase/invoicing";
 import { COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME, SERIF_FONT_FAMILY_CSS } from "@/lib/branding";
 import { numberToWords, type PaymentVoucher } from "@/lib/supabase/payment-vouchers";
 import type { CustomerReceiptVoucher } from "@/lib/supabase/receipt-vouchers";
@@ -98,9 +98,7 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
   const contactPhone = customized(profile.phone, DEFAULT_COMPANY.phone) ? profile.phone.trim() : REFERENCE_PHONE;
   const contactEmail = customized(profile.email, DEFAULT_COMPANY.email) ? profile.email.trim() : REFERENCE_EMAIL;
   const contactWebsite = profile.website?.trim() || "www.glasscosanitary.com";
-  const footerBrand = customized(profile.name, DEFAULT_COMPANY.name)
-    ? COMPANY_LEGAL_NAME
-    : `${REFERENCE_COMPANY_NAME} - GUJRANWALA, PAKISTAN`;
+  const footerBrand = COMPANY_LEGAL_NAME;
   const titleSize = Math.min(COMPANY_HEADER_FONT_SIZE_PX, 24);
 
   const title = VOUCHER_TITLES[data.kind];
