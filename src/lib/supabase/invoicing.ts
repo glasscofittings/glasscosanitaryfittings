@@ -80,31 +80,40 @@ function headers(): HeadersInit {
   };
 }
 
-export const REFERENCE_COMPANY_NAME = "Komax brash bush & gate valve fittings";
+export const REFERENCE_COMPANY_NAME = "Glassco Sanitary Fittings";
 export const REFERENCE_TAGLINE =
   "QUALITY SANITARY FITTINGS | TRUSTED SUPPLY | LONG LASTING RELATIONSHIPS";
 export const REFERENCE_ADDRESS = "Race Course GT Road, Gujranwala, Pakistan";
-export const REFERENCE_PHONE = "+92 300 5556016";
-export const REFERENCE_EMAIL = "komaxfittings@gmail.com";
+export const REFERENCE_PHONE = "+92 300 0656570";
+export const REFERENCE_EMAIL = "glasscosanitaryfittings@gmail.com";
 export const NAVY_BLUE = "#0aa32bff";
 export const LIGHT_BLUE = "#DBEAFE";
 
+/**
+ * Pure, idempotent tax breakdown. Defaults every rate to 0 — a tax amount is
+ * only produced when the caller explicitly supplies a non-zero rate. Calling it
+ * repeatedly with the same inputs always yields the same result (no accumulation).
+ *
+ * @param taxableValue Net amount to tax (PKR).
+ * @param options.salesTaxRate   Sales tax percent (default 0).
+ * @param options.furtherTaxRate Further tax percent (default 0).
+ */
 export function calculateTax(
   taxableValue: number,
-  isRegistered: boolean,
+  options: { salesTaxRate?: number; furtherTaxRate?: number } = {},
 ): TaxBreakdown {
-  const salesTaxRate = 0;
-  const salesTaxAmount = 0;
-  const furtherTaxRate = 0;
-  const furtherTaxAmount = 0;
-  const roundedTaxable = Math.round(taxableValue * 100) / 100;
+  const roundedTaxable = Math.round((Number(taxableValue) || 0) * 100) / 100;
+  const salesTaxRate = Math.max(0, Number(options.salesTaxRate) || 0);
+  const furtherTaxRate = Math.max(0, Number(options.furtherTaxRate) || 0);
+  const salesTaxAmount = Math.round(roundedTaxable * salesTaxRate) / 100;
+  const furtherTaxAmount = Math.round(roundedTaxable * furtherTaxRate) / 100;
   return {
     taxable_value: roundedTaxable,
     sales_tax_rate: salesTaxRate,
     sales_tax_amount: salesTaxAmount,
     further_tax_rate: furtherTaxRate,
     further_tax_amount: furtherTaxAmount,
-    total_payable: roundedTaxable,
+    total_payable: Math.round((roundedTaxable + salesTaxAmount + furtherTaxAmount) * 100) / 100,
   };
 }
 
@@ -260,6 +269,53 @@ export async function fetchInvoices(): Promise<SalesInvoice[]> {
       err instanceof Error ? err.message : err,
     );
     return [];
+  }
+}
+
+/**
+ * Fetch a single sales invoice fresh from the database (with parties + items).
+ * Used after posting so the PDF is rendered from the authoritative saved row
+ * rather than stale component state. Returns null when not found or on error.
+ */
+export async function fetchInvoiceById(
+  invoiceId: string,
+): Promise<SalesInvoice | null> {
+  if (!SUPABASE_URL || !invoiceId) return null;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/sales_invoices?id=eq.${encodeURIComponent(
+        invoiceId,
+      )}&select=*,parties(id,name,party_type,address,phone,email,ntn_strn),items:sales_invoice_items(*)&limit=1`,
+      { headers: headers() },
+    );
+    const text = await res.text();
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* non-JSON response */
+    }
+    if (!res.ok || !Array.isArray(body) || body.length === 0) {
+      console.error("Supabase Error [fetchInvoiceById]:", {
+        status: res.ok ? 200 : res.status,
+        invoiceId,
+        message: text.slice(0, 300),
+      });
+      return null;
+    }
+    const r = body[0] as SalesInvoice & { parties?: Partial<Party> };
+    return {
+      ...r,
+      parties: r.parties
+        ? ({ ...r.parties, is_registered: Boolean(r.parties.ntn_strn) } as Party)
+        : r.parties,
+    } as SalesInvoice;
+  } catch (err) {
+    console.error(
+      "Supabase Error [fetchInvoiceById]:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
   }
 }
 
@@ -1495,6 +1551,9 @@ export function generateInvoiceHTML(
       : Math.max(0, r2(netLinesTotal - Number(invoice.taxable_value_pkr ?? 0)));
   /** Everything the customer was let off: line discounts + invoice-level XD. */
   const totalDiscount = r2(totalLineDiscounts + extraDiscount);
+  // Sales tax defaults to 0. We coerce to a number and treat any non-finite /
+  // negative value as 0 so the PDF never invents a GST amount.
+  const salesTaxAmt = Math.max(0, r2(Number(invoice.sales_tax_amount_pkr ?? 0)));
   const furtherTaxRate = invoice.further_tax_rate ?? 0;
   const furtherTaxAmt = r2(Number(invoice.further_tax_amount_pkr ?? 0));
   const totalQty = r2(
@@ -1558,7 +1617,14 @@ export function generateInvoiceHTML(
 
   const summaryRows = [
     `<tr><td>${urUnder("Discount / Extra Discount (XD)", UR.discountXd)}</td><td class="amt">PKR ${fmt(totalDiscount)}</td></tr>`,
-    `<tr><td>${urUnder("Sales Tax (GST)", UR.salesTax)}</td><td class="amt">PKR ${fmt(invoice.sales_tax_amount_pkr)}</td></tr>`,
+    // Only render the Sales Tax (GST) row when there is an actual GST amount.
+    // At the 0% default the row is omitted and Total Amount equals the taxable
+    // value — no phantom 18% GST is ever printed.
+    ...(salesTaxAmt > 0
+      ? [
+          `<tr><td>${urUnder("Sales Tax (GST)", UR.salesTax)}</td><td class="amt">PKR ${fmt(salesTaxAmt)}</td></tr>`,
+        ]
+      : []),
     ...(furtherTaxAmt > 0
       ? [
           `<tr><td>${urUnder(`Further Tax (${furtherTaxRate}%)`, UR.furtherTax)}</td><td class="amt">PKR ${fmt(furtherTaxAmt)}</td></tr>`,

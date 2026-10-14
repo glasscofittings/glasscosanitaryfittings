@@ -35,8 +35,11 @@ export default function GSTInvoiceForm({ customers, onSaved, onClose }: GSTInvoi
   const selectedCustomer = customers.find((c) => c.id === customerId);
 
   const taxableValue = items.reduce((a, item) => a + item.quantity * item.unit_price, 0);
+  // Sales tax and further tax both default to 0 — no rate is applied unless the
+  // user explicitly sets one. calculateTax is pure/idempotent: re-running it on
+  // the same taxableValue always yields the same breakdown (no stacking).
   const breakdown: TaxBreakdown | null = taxableValue > 0
-    ? calculateTax(taxableValue, selectedCustomer?.is_registered ?? true)
+    ? calculateTax(taxableValue)
     : null;
 
   const isValid = customerId && items.some((item) => item.product_id && item.quantity > 0 && item.unit_price > 0);

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
-import { type SalesInvoice, type DispatchLineItem, postGSTPaintsInvoice, triggerPrint, generateInvoiceHTML, createDispatchRecord, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
+import { type SalesInvoice, type DispatchLineItem, postGSTPaintsInvoice, triggerPrint, generateInvoiceHTML, createDispatchRecord, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands, fetchInvoiceById } from "@/lib/supabase/invoicing";
 import { useOperatorStore } from "@/lib/store/useOperatorStore";
 import { formatPKR } from "@/lib/utils/formatters";
 
@@ -20,16 +20,21 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
   const [printing, setPrinting] = useState(false);
   const [step, setStep] = useState<"idle" | "posting" | "posted" | "printing" | "print-done" | "error">("idle");
   const [printResult, setPrintResult] = useState("");
+  // Holds the freshly-saved invoice after a successful post so retry/print and
+  // PDF export render from the authoritative DB row, not stale pre-post state.
+  const [postedInvoice, setPostedInvoice] = useState<SalesInvoice | null>(null);
 
   useEscapeToClose(open, handleClose);
 
   if (!invoice || !open) return null;
 
   // The invoice row itself carries no products; print with the line items handed to this drawer.
+  // Prefer the freshly-posted record when available so reprints match what was saved.
+  const baseInvoice = postedInvoice ?? invoice;
   const printableInvoice: SalesInvoice =
-    invoice.items && invoice.items.length > 0
-      ? invoice
-      : { ...invoice, items: dispatchItemsToInvoiceItems(invoice.id, lineItems) };
+    baseInvoice.items && baseInvoice.items.length > 0
+      ? baseInvoice
+      : { ...baseInvoice, items: dispatchItemsToInvoiceItems(invoice.id, lineItems) };
 
   async function handlePostAndPrint() {
     if (!invoice) return;
@@ -112,17 +117,27 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
     setPrinting(true);
     setStep("printing");
 
-    // Build a fully-enriched invoice for printing with confirmed RPC totals + line items
+    // The RPC has already recalculated + persisted the final invoice row.
+    // Re-fetch it from the database so the PDF is rendered from the
+    // authoritative saved record (tax = 0 by default) rather than the stale
+    // component state that was captured before posting. This removes the
+    // "print twice to see correct values" bug.
+    const fresh = await fetchInvoiceById(invoice.id);
+
+    // Build a fully-enriched invoice for printing from the freshly-saved row.
+    // Fall back to the pre-post invoice only if the refetch fails, and always
+    // carry the RPC-confirmed total so the printed total matches the ledger.
     const postedInvoice: SalesInvoice = {
-      ...invoice,
-      taxable_value_pkr: invoice.taxable_value_pkr,
-      sales_tax_amount_pkr: invoice.sales_tax_amount_pkr,
-      further_tax_amount_pkr: invoice.further_tax_amount_pkr,
+      ...(fresh ?? invoice),
       total_invoice_value_pkr: rpcData.total_payable,
-      items: (invoice.items && invoice.items.length > 0)
-        ? invoice.items
-        : dispatchItemsToInvoiceItems(invoice.id, lineItems),
+      items:
+        fresh && fresh.items && fresh.items.length > 0
+          ? fresh.items
+          : (invoice.items && invoice.items.length > 0
+              ? invoice.items
+              : dispatchItemsToInvoiceItems(invoice.id, lineItems)),
     };
+    setPostedInvoice(postedInvoice);
 
     let printRes;
     try {
@@ -205,6 +220,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
   function handleClose() {
     setStep("idle");
     setPrintResult("");
+    setPostedInvoice(null);
     onClose();
   }
 

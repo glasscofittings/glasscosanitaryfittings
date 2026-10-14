@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
-import { type Party, type SalesInvoice, type DispatchLineItem, updateInvoice, updateInvoiceItems, calculateTax } from "@/lib/supabase/invoicing";
+import { type Party, type SalesInvoice, type DispatchLineItem, updateInvoice, updateInvoiceItems } from "@/lib/supabase/invoicing";
 import { formatPKR } from "@/lib/utils/formatters";
 
 interface LineItem {
@@ -87,7 +87,6 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
     Math.max(0, Math.round((grossValue * (discountPercent / 100) + discountFlat) * 100) / 100)
   );
   const taxableValue = Math.round((grossValue - discountAmount) * 100) / 100;
-  const tax = calculateTax(taxableValue, selectedCustomer?.is_registered ?? false);
   const salesTaxAmount = taxableValue * (salesTaxRate / 100);
   const furtherTaxAmount = taxableValue * (furtherTaxRate / 100);
   const totalPayable = taxableValue + salesTaxAmount + furtherTaxAmount;
