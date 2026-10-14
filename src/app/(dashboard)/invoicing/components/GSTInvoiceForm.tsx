@@ -254,29 +254,9 @@ export default function GSTInvoiceForm({ customers, onSaved, onClose }: GSTInvoi
         </select>
       </div>
 
-      {selectedCustomer && !selectedCustomer.is_registered && (
-        <div className="flex items-center gap-2 text-caption text-status-amber bg-status-amber/10 px-3 py-2 rounded-lg border border-status-amber/20">
-          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-          </svg>
-          Unregistered buyer — 4% Further Tax will apply automatically
-        </div>
-      )}
 
-      {selectedCustomer && selectedCustomer.is_registered && (
-        <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-border-subtle bg-bg-subtle">
-          <div className="flex items-center gap-2">
-            <span className="text-caption text-secondary">Apply 4% Further Tax (optional)</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setApplyFurtherTax(!applyFurtherTax)}
-            className={`relative h-5 w-9 rounded-full transition-colors ${applyFurtherTax ? "bg-crimson-primary" : "bg-bg-muted border border-border-default"}`}
-          >
-            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${applyFurtherTax ? "left-[18px]" : "left-0.5"}`} />
-          </button>
-        </div>
-      )}
+
+
 
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -344,12 +324,12 @@ export default function GSTInvoiceForm({ customers, onSaved, onClose }: GSTInvoi
             <span className="font-mono text-num-table text-foreground JetBrainsMono">{formatPKR(breakdown.taxable_value)}</span>
           </div>
           <div className="flex justify-between text-body">
-            <span className="text-secondary">GST (18%)</span>
+            <span className="text-secondary">GST ({breakdown.sales_tax_rate}%)</span>
             <span className="font-mono text-num-table text-foreground JetBrainsMono">{formatPKR(breakdown.sales_tax_amount)}</span>
           </div>
           {breakdown.further_tax_amount > 0 && (
             <div className="flex justify-between text-body">
-              <span className="text-secondary">Further Tax (4%)</span>
+              <span className="text-secondary">Further Tax ({breakdown.further_tax_rate}%)</span>
               <span className="font-mono text-num-table text-status-amber JetBrainsMono">{formatPKR(breakdown.further_tax_amount)}</span>
             </div>
           )}
