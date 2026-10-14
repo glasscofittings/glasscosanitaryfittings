@@ -22,7 +22,6 @@ import {
 import { URDU_HTML_STYLES, UR, urSpan, urUnder } from "@/lib/pdf-urdu";
 import {
   REFERENCE_ADDRESS,
-  REFERENCE_COMPANY_NAME,
   REFERENCE_EMAIL,
   REFERENCE_PHONE,
 } from "@/lib/supabase/invoicing";
@@ -140,9 +139,7 @@ export function generateQuotationHTML(quotation: Quotation): string {
     socialInstagram ? `IG: ${esc(socialInstagram)}` : "",
     socialWhatsapp ? `WhatsApp: ${esc(socialWhatsapp)}` : "",
   ].filter(Boolean);
-  const footerBrand = customized(profile.name, DEFAULT_COMPANY.name)
-    ? COMPANY_LEGAL_NAME
-    : `${REFERENCE_COMPANY_NAME} - GUJRANWALA, PAKISTAN`;
+  const footerBrand = COMPANY_LEGAL_NAME;
 
   const qtyFmt = (n: number) =>
     Number.isInteger(n) ? n.toLocaleString("en-PK") : fmt(n);
