@@ -239,12 +239,12 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
               <span className="font-mono text-num-table text-foreground">{formatPKR(invoice.taxable_value_pkr)}</span>
             </div>
             <div className="flex justify-between text-body">
-              <span className="text-secondary">Sales Tax (18%)</span>
+              <span className="text-secondary">Sales Tax ({invoice.sales_tax_rate ?? 0}%)</span>
               <span className="font-mono text-num-table text-foreground">{formatPKR(invoice.sales_tax_amount_pkr)}</span>
             </div>
             {invoice.further_tax_amount_pkr > 0 && (
               <div className="flex justify-between text-body">
-                <span className="text-secondary">Further Tax (4%)</span>
+                <span className="text-secondary">Further Tax ({invoice.further_tax_rate ?? 0}%)</span>
                 <span className="font-mono text-num-table text-status-amber">{formatPKR(invoice.further_tax_amount_pkr)}</span>
               </div>
             )}

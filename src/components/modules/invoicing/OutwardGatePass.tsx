@@ -47,8 +47,8 @@ export default function OutwardGatePass({ invoice, open, onClose }: Props) {
     const fmt = (n: number | null | undefined) =>
       (n ?? 0).toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    const salesTaxRate = invoice!.sales_tax_rate ?? 18;
-    const furtherTaxRate = invoice!.further_tax_rate ?? 4;
+    const salesTaxRate = invoice!.sales_tax_rate ?? 0;
+    const furtherTaxRate = invoice!.further_tax_rate ?? 0;
     const furtherTaxAmt = invoice!.further_tax_amount_pkr ?? 0;
 
     const html = `
@@ -193,12 +193,12 @@ ${URDU_HTML_STYLES}
               <span className="font-mono text-caption text-foreground">PKR {invoice.taxable_value_pkr?.toLocaleString("en-PK", { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="flex justify-between text-body">
-              <span className="text-secondary text-caption">Sales Tax ({invoice.sales_tax_rate ?? 18}%)</span>
+              <span className="text-secondary text-caption">Sales Tax ({invoice.sales_tax_rate ?? 0}%)</span>
               <span className="font-mono text-caption text-foreground">PKR {invoice.sales_tax_amount_pkr?.toLocaleString("en-PK", { minimumFractionDigits: 2 })}</span>
             </div>
             {(invoice.further_tax_amount_pkr ?? 0) > 0 && (
               <div className="flex justify-between text-body">
-                <span className="text-secondary text-caption">Further Tax ({invoice.further_tax_rate ?? 4}%)</span>
+                <span className="text-secondary text-caption">Further Tax ({invoice.further_tax_rate ?? 0}%)</span>
                 <span className="font-mono text-caption text-status-amber">PKR {invoice.further_tax_amount_pkr?.toLocaleString("en-PK", { minimumFractionDigits: 2 })}</span>
               </div>
             )}

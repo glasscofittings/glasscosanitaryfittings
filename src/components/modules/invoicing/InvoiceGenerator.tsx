@@ -55,8 +55,8 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
   const [addCustomerOpen, setAddCustomerOpen] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
 
-  const [salesTaxRate, setSalesTaxRate] = useState(18);
-  const [furtherTaxRate, setFurtherTaxRate] = useState(4);
+  const [salesTaxRate, setSalesTaxRate] = useState(0);
+  const [furtherTaxRate, setFurtherTaxRate] = useState(0);
   const [additionalTaxRate, setAdditionalTaxRate] = useState(0);
   const [discountPercent, setDiscountPercent] = useState(0);
   const [discountFlat, setDiscountFlat] = useState(0);

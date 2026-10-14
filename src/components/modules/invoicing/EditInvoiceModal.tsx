@@ -53,8 +53,8 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
-  const [salesTaxRate, setSalesTaxRate] = useState(invoice.sales_tax_rate ?? 18);
-  const [furtherTaxRate, setFurtherTaxRate] = useState(invoice.further_tax_rate ?? 4);
+  const [salesTaxRate, setSalesTaxRate] = useState(invoice.sales_tax_rate ?? 0);
+  const [furtherTaxRate, setFurtherTaxRate] = useState(invoice.further_tax_rate ?? 0);
   const [discountPercent, setDiscountPercent] = useState(invoice.discount_percent ?? 0);
   // Reconstruct the flat Rs. part so % + flat recombine to the stored discount.
   const [discountFlat, setDiscountFlat] = useState(() => {
