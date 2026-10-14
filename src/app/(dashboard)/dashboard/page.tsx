@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import {
   fetchDashboardKPIs,
   fetchAuditLogs,
@@ -59,9 +61,25 @@ export default function DashboardPage() {
   const realtimeStatus = useNetworkStore((s) => s.realtimeStatus);
   const isBrowserOnline = useNetworkStore((s) => s.isBrowserOnline);
   const newIdsRef = useRef(new Set<string>());
+  const searchParams = useSearchParams();
 
   const totalNodes = 4;
   const devicesOnline = (isLive || (isBrowserOnline && realtimeStatus === "SUBSCRIBED")) ? 1 : 0;
+
+  /* ── Show access-denied toast when redirected from a disabled module ── */
+  useEffect(() => {
+    const blocked = searchParams.get("blocked");
+    if (!blocked) return;
+    toast.error(`Access denied: "${blocked}" is disabled`, {
+      description: "This module has been turned off in Settings → Menu Visibility.",
+      duration: 6000,
+    });
+    // Remove the query param from the URL without reloading the page.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("blocked");
+    window.history.replaceState({}, "", url.pathname + (url.search || ""));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

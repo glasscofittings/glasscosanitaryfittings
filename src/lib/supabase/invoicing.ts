@@ -93,12 +93,10 @@ export function calculateTax(
   taxableValue: number,
   isRegistered: boolean,
 ): TaxBreakdown {
-  const salesTaxRate = 18;
-  const salesTaxAmount = Math.round(taxableValue * 0.18 * 100) / 100;
-  const furtherTaxRate = isRegistered ? 0 : 4;
-  const furtherTaxAmount = isRegistered
-    ? 0
-    : Math.round(taxableValue * 0.04 * 100) / 100;
+  const salesTaxRate = 0;
+  const salesTaxAmount = 0;
+  const furtherTaxRate = 0;
+  const furtherTaxAmount = 0;
   const roundedTaxable = Math.round(taxableValue * 100) / 100;
   return {
     taxable_value: roundedTaxable,
@@ -106,9 +104,7 @@ export function calculateTax(
     sales_tax_amount: salesTaxAmount,
     further_tax_rate: furtherTaxRate,
     further_tax_amount: furtherTaxAmount,
-    total_payable:
-      Math.round((roundedTaxable + salesTaxAmount + furtherTaxAmount) * 100) /
-      100,
+    total_payable: roundedTaxable,
   };
 }
 
