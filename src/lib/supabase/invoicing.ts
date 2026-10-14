@@ -1512,9 +1512,7 @@ export function generateInvoiceHTML(
     socialInstagram ? `IG: ${esc(socialInstagram)}` : "",
     socialWhatsapp ? `WhatsApp: ${esc(socialWhatsapp)}` : "",
   ].filter(Boolean);
-  const footerBrand = customized(profile.name, DEFAULT_COMPANY.name)
-    ? COMPANY_LEGAL_NAME
-    : `${REFERENCE_COMPANY_NAME} - GUJRANWALA, PAKISTAN`;
+  const footerBrand = COMPANY_LEGAL_NAME;
 
   const billDate = new Date(invoice.created_at);
   const dateStr = billDate.toLocaleDateString("en-PK", {
