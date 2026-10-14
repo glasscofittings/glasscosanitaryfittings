@@ -351,7 +351,7 @@ export async function createInvoice(invoice: {
       invoice_number: invoiceNumber,
       customer_id: invoice.customer_id,
       taxable_value_pkr: invoice.taxable_value_pkr,
-      sales_tax_rate: invoice.sales_tax_rate ?? 18,
+      sales_tax_rate: invoice.sales_tax_rate ?? 0,
       sales_tax_amount_pkr: invoice.sales_tax_amount_pkr,
       further_tax_rate: invoice.further_tax_rate ?? 0,
       further_tax_amount_pkr: invoice.further_tax_amount_pkr,
@@ -1495,7 +1495,7 @@ export function generateInvoiceHTML(
       : Math.max(0, r2(netLinesTotal - Number(invoice.taxable_value_pkr ?? 0)));
   /** Everything the customer was let off: line discounts + invoice-level XD. */
   const totalDiscount = r2(totalLineDiscounts + extraDiscount);
-  const furtherTaxRate = invoice.further_tax_rate ?? 4;
+  const furtherTaxRate = invoice.further_tax_rate ?? 0;
   const furtherTaxAmt = r2(Number(invoice.further_tax_amount_pkr ?? 0));
   const totalQty = r2(
     items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
