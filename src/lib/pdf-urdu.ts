@@ -68,8 +68,16 @@ export interface UrduTextOptions {
   lineHeight?: number
 }
 
+/** Checks whether the Urdu font is registered and ready on the document. */
+export function hasUrduFont(doc: jsPDF): boolean {
+  const fontList = doc.getFontList() as Record<string, string[]> | undefined
+  return Boolean(fontList && fontList[URDU_FONT])
+}
+
 /** Draws one or more lines of Urdu text. Returns the Y just below the last line. */
 export function drawUrdu(doc: jsPDF, text: string, x: number, y: number, options: UrduTextOptions = {}): number {
+  if (!text || !hasUrduFont(doc)) return y
+
   const { align = 'left', fontSize = 9, color, maxWidth, lineHeight = fontSize * 0.5 } = options
   const previousFont = doc.getFont()
   const previousSize = doc.getFontSize()
@@ -89,6 +97,7 @@ export function drawUrdu(doc: jsPDF, text: string, x: number, y: number, options
 
 /** Word-wraps Urdu text to a width. Call with the Urdu font already active for accurate metrics. */
 export function splitUrdu(doc: jsPDF, text: string, maxWidth: number): string[] {
+  if (!hasUrduFont(doc)) return [text]
   const previousFont = doc.getFont()
   doc.setFont(URDU_FONT, 'normal')
   const lines: string[] = []
@@ -109,6 +118,7 @@ export function splitUrdu(doc: jsPDF, text: string, maxWidth: number): string[] 
 
 /** Measures how many lines Urdu text needs at a font size and width. */
 export function countUrduLines(doc: jsPDF, text: string, maxWidth: number, fontSize = 9): number {
+  if (!hasUrduFont(doc)) return 0
   const previousSize = doc.getFontSize()
   doc.setFontSize(fontSize)
   const count = splitUrdu(doc, text, maxWidth).length

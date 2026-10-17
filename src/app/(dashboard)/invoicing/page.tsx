@@ -297,8 +297,8 @@ export default function InvoicingPage() {
       {genOpen && (
         <>
           <div className="drawer-overlay" onClick={() => setGenOpen(false)} />
-          <div className="drawer-panel" style={{ zIndex: 80 }}>
-            <div className="drawer-header">
+          <div className="w-full max-w-2xl md:max-w-3xl lg:max-w-4xl h-full fixed right-0 top-0 bg-[var(--drawer-bg)] text-foreground border-l border-[var(--drawer-border)] backdrop-blur-xl z-[80] shadow-2xl overflow-y-auto p-6">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-border-subtle">
               <h2 className="text-h2 font-semibold">New Tax Invoice</h2>
               <button
                 onClick={() => setGenOpen(false)}
@@ -309,15 +309,13 @@ export default function InvoicingPage() {
                 </svg>
               </button>
             </div>
-            <div className="drawer-body">
-              <InvoiceGenerator
-                customers={customers}
-                onCreated={handleRefresh}
-                onPost={(inv, items) => { handleRefresh(); handlePost(inv, items); }}
-                onClose={() => setGenOpen(false)}
-                onCustomerCreated={(c) => { setCustomers((prev) => [...prev, c]); }}
-              />
-            </div>
+            <InvoiceGenerator
+              customers={customers}
+              onCreated={handleRefresh}
+              onPost={(inv, items) => { handleRefresh(); handlePost(inv, items); }}
+              onClose={() => setGenOpen(false)}
+              onCustomerCreated={(c) => { setCustomers((prev) => [...prev, c]); }}
+            />
           </div>
         </>
       )}

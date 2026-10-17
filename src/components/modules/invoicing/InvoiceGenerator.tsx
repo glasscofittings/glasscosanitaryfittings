@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import { type Party, type SalesInvoice, type DispatchLineItem, createInvoice, checkDuplicateInvoice } from "@/lib/supabase/invoicing";
 import { formatPKR } from "@/lib/utils/formatters";
+import ProductCombobox, { type ProductOption } from "./ProductCombobox";
 import AddCustomerModal from "./AddCustomerModal";
 
 interface LineItem {
@@ -15,15 +16,8 @@ interface LineItem {
   unit_of_measure: string;
   discount_percent?: number;
   discount_pkr?: number;
-}
-
-interface Product {
-  id: string;
-  name: string;
-  sku: string;
-  category: string;
-  available_stock: number;
-  unit_price: number;
+  /** Latest known stock for the picked product (display aid only). */
+  stock?: number;
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -53,7 +47,7 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
   const [duplicateWarning, setDuplicateWarning] = useState("");
   const [applyFurtherTax, setApplyFurtherTax] = useState(false);
   const [addCustomerOpen, setAddCustomerOpen] = useState(false);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductOption[]>([]);
 
   const [salesTaxRate, setSalesTaxRate] = useState(0);
   const [furtherTaxRate, setFurtherTaxRate] = useState(0);
@@ -154,18 +148,25 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
   const isValid = !!customerId && items.some((item) => item.product_id && item.quantity > 0 && item.unit_price > 0);
 
   function updateItem(index: number, field: keyof LineItem, value: string | number) {
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+  }
+
+  /** Applies a combobox pick to the row: id, name, rate, UOM and stock. */
+  function selectProduct(index: number, product: ProductOption | null) {
     setItems((prev) =>
       prev.map((item, i) => {
         if (i !== index) return item;
-        const updated = { ...item, [field]: value };
-        if (field === "product_id") {
-          const product = products.find((p) => p.id === value);
-          if (product) {
-            updated.product_name = product.name;
-            updated.unit_price = product.unit_price;
-          }
+        if (!product) {
+          return { ...item, product_id: "", product_name: "", stock: undefined };
         }
-        return updated;
+        return {
+          ...item,
+          product_id: product.id,
+          product_name: product.name,
+          unit_price: product.unit_price,
+          unit_of_measure: item.unit_of_measure || "PCS",
+          stock: product.available_stock,
+        };
       })
     );
   }
@@ -279,8 +280,9 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
   const inputCls = "w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-body focus:border-crimson-primary focus:outline-none focus:ring-1 focus:ring-crimson-primary/50 transition-colors";
 
   return (
-    <div className="space-y-5">
-      <div ref={customerRef} className="relative">
+    <div className="flex flex-col gap-6 w-full">
+      {/* Customer Section */}
+      <div ref={customerRef} className="glass-card p-4 w-full relative">
         <label className="text-caption text-secondary uppercase tracking-wider font-medium block mb-2">
           Customer <span className="text-crimson-primary">*</span>
         </label>
@@ -412,11 +414,12 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
         </div>
       )}
 
-      <div className="glass-card p-4">
+      {/* Tax Configuration */}
+      <div className="glass-card p-4 w-full">
         <div className="flex items-center justify-between mb-3">
           <label className="text-caption text-secondary uppercase tracking-wider font-medium">Tax Configuration</label>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-3 gap-4 w-full">
           <div>
             <label className="block text-[10px] text-muted uppercase mb-1">Sales Tax %</label>
             <input
@@ -456,14 +459,15 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
         </div>
       </div>
 
-      <div className="glass-card p-4">
+      {/* Discount */}
+      <div className="glass-card p-4 w-full">
         <div className="flex items-center justify-between mb-3">
           <label className="text-caption text-secondary uppercase tracking-wider font-medium">Discount</label>
           {discountAmount > 0 && (
             <span className="text-caption font-mono text-status-amber whitespace-nowrap">− {formatPKR(discountAmount)}</span>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4 w-full">
           <div>
             <label className="block text-[10px] text-muted uppercase mb-1">Discount %</label>
             <input
@@ -491,60 +495,72 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
         <p className="text-[10px] text-muted mt-2">Applied to the line-item total before tax. % and Rs. combine when both are set.</p>
       </div>
 
-      <div>
+      {/* Line Items */}
+      <div className="w-full">
         <div className="flex items-center justify-between mb-2">
           <label className="text-caption text-secondary uppercase tracking-wider font-medium">Line Items</label>
           <button onClick={addItem} className="text-caption text-crimson-light hover:text-crimson-primary transition-colors">+ Add Item</button>
         </div>
         <div className="space-y-2">
           {items.map((item, idx) => (
-            <div key={item.key} className="flex gap-2 items-start p-2 rounded-lg bg-bg-subtle border border-border-subtle">
-              <select
-                value={item.product_id}
-                onChange={(e) => updateItem(idx, "product_id", e.target.value)}
-                className="h-8 px-2 rounded bg-obsidian-bg border border-border-default text-foreground text-caption flex-1 focus:border-crimson-primary focus:outline-none"
-              >
-                <option value="">Product...</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-              <div className="flex flex-col items-center">
+            <div key={item.key} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg bg-bg-subtle border border-border-subtle">
+              <div className="col-span-12 sm:col-span-4 min-w-0">
+                <ProductCombobox
+                  products={products}
+                  value={item.product_id}
+                  productName={item.product_name}
+                  onSelect={(product) => selectProduct(idx, product)}
+                />
+              </div>
+              <div className="col-span-4 sm:col-span-1 min-w-0">
                 <input
                   type="number"
                   value={item.quantity || ""}
                   onChange={(e) => updateItem(idx, "quantity", parseFloat(e.target.value) || 0)}
-                  className="h-8 w-16 px-2 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-center focus:border-crimson-primary focus:outline-none"
+                  className="h-8 w-full px-2 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-center focus:border-crimson-primary focus:outline-none"
                   placeholder="Qty"
                   min={1}
                 />
               </div>
-              <span className="h-8 flex items-center text-caption text-muted font-mono">{item.unit_of_measure}</span>
-              <input
-                type="number"
-                value={item.unit_price || ""}
-                onChange={(e) => updateItem(idx, "unit_price", parseFloat(e.target.value) || 0)}
-                className="h-8 w-24 px-2 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-right focus:border-crimson-primary focus:outline-none"
-                placeholder="Price"
-                min="0"
-              />
-              <div className="flex items-center gap-1">
+              <span
+                className="col-span-3 sm:col-span-1 h-8 flex items-center text-caption text-muted font-mono truncate"
+                title={item.unit_of_measure}
+              >
+                {item.unit_of_measure}
+              </span>
+              <div className="col-span-5 sm:col-span-2 min-w-0">
+                <input
+                  type="number"
+                  value={item.unit_price || ""}
+                  onChange={(e) => updateItem(idx, "unit_price", parseFloat(e.target.value) || 0)}
+                  className="h-8 w-full px-2 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-right focus:border-crimson-primary focus:outline-none"
+                  placeholder="Price"
+                  min="0"
+                />
+              </div>
+              <div className="col-span-4 sm:col-span-1 min-w-0">
                 <input
                   type="number"
                   value={item.discount_percent || ""}
                   onChange={(e) => updateItem(idx, "discount_percent", Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
-                  className="h-8 w-16 px-1 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-center focus:border-crimson-primary focus:outline-none"
+                  className="h-8 w-full px-1 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-center focus:border-crimson-primary focus:outline-none"
                   placeholder="Disc%"
                   title="Line item discount %"
                   min="0"
                   max="100"
                 />
               </div>
-              <span className="h-8 flex items-center text-caption text-muted font-mono whitespace-nowrap min-w-[70px] justify-end">
+              <span
+                className="col-span-6 sm:col-span-2 h-8 flex items-center justify-end text-caption text-muted font-mono whitespace-nowrap"
+                title={item.stock !== undefined ? `${item.stock} in stock` : undefined}
+              >
                 {item.quantity > 0 && item.unit_price > 0 ? formatPKR(lineNet(item)) : "—"}
               </span>
               {items.length > 1 && (
-                <button onClick={() => removeItem(idx)} className="h-8 w-8 flex items-center justify-center text-muted hover:text-status-alert transition-colors">
+                <button
+                  onClick={() => removeItem(idx)}
+                  className="col-span-2 sm:col-span-1 h-8 w-full sm:w-8 ml-auto flex items-center justify-center text-muted hover:text-status-alert transition-colors"
+                >
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>

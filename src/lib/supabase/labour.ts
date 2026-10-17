@@ -5,6 +5,8 @@ export interface Worker {
   full_name: string;
   role_designation: string;
   base_salary_pkr: number;
+  /** Extra pay per hour worked after the shift ends (17:00). */
+  overtime_rate_pkr: number;
   joining_date: string;
   is_active: boolean;
 }
@@ -14,6 +16,20 @@ export interface AttendanceRecord {
   worker_id: string;
   attendance_date: string;
   status: "P" | "A" | "L";
+  /** "HH:MM:SS" — Postgres TIME. Only set on Present days. */
+  check_in_time: string | null;
+  check_out_time: string | null;
+}
+
+export interface TimeLog {
+  checkIn: string | null;
+  checkOut: string | null;
+}
+
+export interface TimeLogMap {
+  [workerId: string]: {
+    [date: string]: TimeLog;
+  };
 }
 
 export interface AttendanceMap {
@@ -141,6 +157,8 @@ export async function upsertAttendance(
           worker_id: workerId,
           attendance_date: date,
           status,
+          // Arrival/departure times only belong to a Present day.
+          ...(status === "P" ? {} : { check_in_time: null, check_out_time: null }),
         }),
       }
     );
@@ -158,10 +176,51 @@ export async function upsertAttendance(
   }
 }
 
+/**
+ * Log arrival / departure for a day. Marks the day Present (times only exist
+ * on Present days). Pass null to clear a time. Times are "HH:MM".
+ */
+export async function saveTimeLog(
+  workerId: string,
+  date: string,
+  checkIn: string | null,
+  checkOut: string | null
+): Promise<{ record: AttendanceRecord | null; error: string | null }> {
+  if (!SUPABASE_URL) return { record: null, error: "Server URL is not configured" };
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/worker_attendance?on_conflict=worker_id,attendance_date`,
+      {
+        method: "POST",
+        headers: { ...headers(), Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify({
+          worker_id: workerId,
+          attendance_date: date,
+          status: "P",
+          check_in_time: checkIn,
+          check_out_time: checkOut,
+        }),
+      }
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = logSupabaseError("worker_attendance time log", res.status, body);
+      return { record: null, error: err.message };
+    }
+    const data = Array.isArray(body) ? body : [];
+    return { record: (data[0] as AttendanceRecord) ?? null, error: null };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Supabase worker_attendance time log]", { message: msg });
+    return { record: null, error: msg };
+  }
+}
+
 export async function createWorker(data: {
   full_name: string;
   role_designation: string;
   base_salary_pkr: number;
+  overtime_rate_pkr: number;
   joining_date: string;
 }): Promise<Worker> {
   const client = createClient();
@@ -169,6 +228,7 @@ export async function createWorker(data: {
     full_name: data.full_name,
     role_designation: data.role_designation,
     base_salary_pkr: data.base_salary_pkr,
+    overtime_rate_pkr: data.overtime_rate_pkr,
     joining_date: data.joining_date,
     is_active: true,
     designation: data.role_designation,
@@ -203,6 +263,7 @@ export async function updateWorker(
     full_name: string;
     role_designation: string;
     base_salary_pkr: number;
+    overtime_rate_pkr: number;
     joining_date: string;
   }
 ): Promise<Worker | null> {
@@ -215,6 +276,7 @@ export async function updateWorker(
         full_name: data.full_name,
         role_designation: data.role_designation,
         base_salary_pkr: data.base_salary_pkr,
+        overtime_rate_pkr: data.overtime_rate_pkr,
         designation: data.role_designation,
         daily_rate_pkr: data.base_salary_pkr / 30,
         joining_date: data.joining_date,
@@ -335,6 +397,19 @@ export function buildAttendanceMap(records: AttendanceRecord[]): AttendanceMap {
   records.forEach((r) => {
     if (!map[r.worker_id]) map[r.worker_id] = {};
     map[r.worker_id][r.attendance_date] = r.status;
+  });
+  return map;
+}
+
+export function buildTimeLogMap(records: AttendanceRecord[]): TimeLogMap {
+  const map: TimeLogMap = {};
+  records.forEach((r) => {
+    if (!r.check_in_time && !r.check_out_time) return;
+    if (!map[r.worker_id]) map[r.worker_id] = {};
+    map[r.worker_id][r.attendance_date] = {
+      checkIn: r.check_in_time ? r.check_in_time.slice(0, 5) : null,
+      checkOut: r.check_out_time ? r.check_out_time.slice(0, 5) : null,
+    };
   });
   return map;
 }

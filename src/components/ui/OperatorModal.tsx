@@ -6,11 +6,11 @@ import { fetchWorkers, type Worker } from "@/lib/supabase/labour";
 import CrimsonButton from "@/components/ui/CrimsonButton";
 
 const MOCK_WORKERS: Worker[] = [
-  { id: "w1", full_name: "Talha Ijaz", role_designation: "Mixer Lead", base_salary_pkr: 45000, joining_date: "", is_active: true },
-  { id: "w2", full_name: "Ali Raza", role_designation: "QC Technician", base_salary_pkr: 38000, joining_date: "", is_active: true },
-  { id: "w3", full_name: "Hassan Ahmed", role_designation: "Warehouse Operator", base_salary_pkr: 35000, joining_date: "", is_active: true },
-  { id: "w4", full_name: "Bilal Khan", role_designation: "Gate Clerk", base_salary_pkr: 32000, joining_date: "", is_active: true },
-  { id: "w5", full_name: "Usman Malik", role_designation: "Packaging Lead", base_salary_pkr: 40000, joining_date: "", is_active: true },
+  { id: "w1", full_name: "Talha Ijaz",    role_designation: "Mixer Lead",         base_salary_pkr: 45000, overtime_rate_pkr: Math.round(45000 / 195), joining_date: "", is_active: true },
+  { id: "w2", full_name: "Ali Raza",       role_designation: "QC Technician",      base_salary_pkr: 38000, overtime_rate_pkr: Math.round(38000 / 195), joining_date: "", is_active: true },
+  { id: "w3", full_name: "Hassan Ahmed",   role_designation: "Warehouse Operator", base_salary_pkr: 35000, overtime_rate_pkr: Math.round(35000 / 195), joining_date: "", is_active: true },
+  { id: "w4", full_name: "Bilal Khan",     role_designation: "Gate Clerk",         base_salary_pkr: 32000, overtime_rate_pkr: Math.round(32000 / 195), joining_date: "", is_active: true },
+  { id: "w5", full_name: "Usman Malik",    role_designation: "Packaging Lead",     base_salary_pkr: 40000, overtime_rate_pkr: Math.round(40000 / 195), joining_date: "", is_active: true },
 ];
 
 function OperatorModalInner() {

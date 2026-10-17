@@ -186,7 +186,7 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       .empty{text-align:center;color:#27292bff;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#dfe8f4;font-weight:700;color:#0f172a;}
+      tr.total-row td{background:#EBF3FA;font-weight:700;color:#0f172a;}
       .words{margin-top:5mm;background:#e8eef7;border:1px solid #43474bff;padding:7px 12px;page-break-inside:avoid;}
       .words-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#27292bff;}
       .words-head .ur{text-transform:none;letter-spacing:normal;font-size:10.5px;}

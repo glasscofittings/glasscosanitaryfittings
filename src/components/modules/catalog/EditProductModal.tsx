@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { updateSanitaryProduct } from "@/lib/supabase/catalog";
 import type { SanitaryProduct, SanitaryCategory, SanitarySubcategory, ProductFinish } from "@/types";
-import { SANITARY_CATEGORIES, PRODUCT_FINISHES } from "@/types";
 import { capitalizeFirst } from "@/lib/utils";
 
 interface Props {
@@ -24,9 +23,9 @@ export default function EditProductModal({ product, open, onClose, onSaved }: Pr
 
   const [name, setName] = useState(product.name);
   const [sku, setSku] = useState(product.sku);
-  const [category, setCategory] = useState<SanitaryCategory>(product.category);
+  const [category, setCategory] = useState(product.category);
   const [subcategory, setSubcategory] = useState(product.subcategory ?? "");
-  const [finish, setFinish] = useState<string>(product.finish ?? "Chrome");
+  const [finish, setFinish] = useState(product.finish ?? "Chrome");
   const [unitPrice, setUnitPrice] = useState(String(product.unit_price));
   const [reorderLevel, setReorderLevel] = useState(String(product.reorder_level));
   const [availableStock, setAvailableStock] = useState(String(product.available_stock));
@@ -37,11 +36,12 @@ export default function EditProductModal({ product, open, onClose, onSaved }: Pr
 
   if (!open) return null;
 
-  const subcategories = SANITARY_CATEGORIES[category] ?? [];
   const isValid =
     name.trim() &&
     sku.trim() &&
-    category &&
+    category.trim() &&
+    subcategory.trim() &&
+    finish.trim() &&
     parseFloat(unitPrice) >= 0 &&
     parseInt(reorderLevel) >= 0 &&
     parseInt(availableStock) >= 0;
@@ -103,28 +103,15 @@ export default function EditProductModal({ product, open, onClose, onSaved }: Pr
               </div>
               <div>
                 <label className={labelCls}>Category</label>
-                <select value={category} onChange={(e) => { setCategory(e.target.value as SanitaryCategory); setSubcategory(""); }} className={inputCls}>
-                  {Object.keys(SANITARY_CATEGORIES).map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                <input type="text" value={category} onChange={(e) => setCategory(e.target.value as SanitaryCategory)} className={inputCls} placeholder="Faucets &amp; Mixers" />
               </div>
               <div>
                 <label className={labelCls}>Subcategory</label>
-                <select value={subcategory} onChange={(e) => setSubcategory(e.target.value)} className={inputCls}>
-                  <option value="">Select...</option>
-                  {subcategories.map((sc) => (
-                    <option key={sc} value={sc}>{sc}</option>
-                  ))}
-                </select>
+                <input type="text" value={subcategory} onChange={(e) => setSubcategory(e.target.value)} className={inputCls} placeholder="Basin Mixers" />
               </div>
               <div>
                 <label className={labelCls}>Finish</label>
-                <select value={finish} onChange={(e) => setFinish(e.target.value)} className={inputCls}>
-                  {PRODUCT_FINISHES.map((f) => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
+                <input type="text" value={finish} onChange={(e) => setFinish(e.target.value as ProductFinish)} className={inputCls} placeholder="Chrome" />
               </div>
               <div>
                 <label className={labelCls}>Unit Price (PKR)</label>

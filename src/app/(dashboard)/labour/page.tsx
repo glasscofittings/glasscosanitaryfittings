@@ -6,9 +6,12 @@ import {
   fetchAttendance,
   upsertAttendance,
   buildAttendanceMap,
+  buildTimeLogMap,
   deleteWorker,
   type Worker,
   type AttendanceMap,
+  type AttendanceRecord,
+  type TimeLogMap,
 } from "@/lib/supabase/labour";
 import WorkerRoster from "@/components/modules/labour/WorkerRoster";
 import AttendanceCalendarGrid from "@/components/modules/labour/AttendanceCalendarGrid";
@@ -19,9 +22,10 @@ import IssueLoanModal from "@/components/modules/labour/IssueLoanModal";
 import LoanTrackingPanel from "@/components/modules/labour/LoanTrackingPanel";
 import WeeklyTimesheet from "@/components/modules/labour/WeeklyTimesheet";
 import TaskAssignmentPanel from "@/components/modules/labour/TaskAssignmentPanel";
+import TimeLogPanel from "@/components/modules/labour/TimeLogPanel";
 import { toast } from "sonner";
 
-type TabKey = "attendance" | "salary" | "loans" | "timesheet" | "tasks";
+type TabKey = "attendance" | "timelog" | "salary" | "loans" | "timesheet" | "tasks";
 
 function getMonthAttendanceSummary(
   workers: Worker[],
@@ -47,6 +51,7 @@ export default function LabourPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [attendance, setAttendance] = useState<AttendanceMap>({});
+  const [timeLogs, setTimeLogs] = useState<TimeLogMap>({});
   const [isLive, setIsLive] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("attendance");
   const [salaryRefreshKey, setSalaryRefreshKey] = useState(0);
@@ -66,6 +71,7 @@ export default function LabourPage() {
       setSelectedWorker((prev) => prev ?? workerList[0]);
     }
     setAttendance(buildAttendanceMap(attendanceRecords));
+    setTimeLogs(buildTimeLogMap(attendanceRecords));
   }
 
   useEffect(() => {
@@ -82,6 +88,7 @@ export default function LabourPage() {
         setSelectedWorker((prev) => prev ?? workerList[0]);
       }
       setAttendance(buildAttendanceMap(attendanceRecords));
+      setTimeLogs(buildTimeLogMap(attendanceRecords));
     }
     run();
     return () => { cancelled = true; };
@@ -107,6 +114,7 @@ export default function LabourPage() {
       });
     } else {
       await upsertAttendance(selectedWorker.id, date, next);
+      if (next !== "P") clearTimeLog(selectedWorker.id, date);
       setAttendance((prev) => ({
         ...prev,
         [selectedWorker.id]: {
@@ -115,6 +123,31 @@ export default function LabourPage() {
         },
       }));
     }
+  }
+
+  function clearTimeLog(workerId: string, date: string) {
+    setTimeLogs((prev) => {
+      if (!prev[workerId]?.[date]) return prev;
+      const inner = { ...prev[workerId] };
+      delete inner[date];
+      return { ...prev, [workerId]: inner };
+    });
+  }
+
+  function handleTimeLogSaved(record: AttendanceRecord) {
+    setAttendance((prev) => ({
+      ...prev,
+      [record.worker_id]: { ...(prev[record.worker_id] ?? {}), [record.attendance_date]: record.status },
+    }));
+    if (!record.check_in_time && !record.check_out_time) {
+      clearTimeLog(record.worker_id, record.attendance_date);
+      return;
+    }
+    const entry = buildTimeLogMap([record])[record.worker_id];
+    setTimeLogs((prev) => ({
+      ...prev,
+      [record.worker_id]: { ...(prev[record.worker_id] ?? {}), ...entry },
+    }));
   }
 
   async function handleDeleteWorker() {
@@ -134,6 +167,7 @@ export default function LabourPage() {
 
   const TABS: { key: TabKey; label: string }[] = [
     { key: "attendance", label: "Attendance" },
+    { key: "timelog", label: "Time Log" },
     { key: "salary", label: "Salary" },
     { key: "loans", label: "Loans" },
     { key: "timesheet", label: "Timesheet" },
@@ -260,6 +294,16 @@ export default function LabourPage() {
                     onToggle={handleToggleAttendance}
                   />
                 )}
+                {activeTab === "timelog" && (
+                  <TimeLogPanel
+                    worker={selectedWorker}
+                    year={year}
+                    month={month}
+                    attendance={attendance}
+                    timeLogs={timeLogs}
+                    onSaved={handleTimeLogSaved}
+                  />
+                )}
                 {activeTab === "salary" && (
                   <SalaryCard
                     key={selectedWorker.id}
@@ -267,6 +311,7 @@ export default function LabourPage() {
                     year={year}
                     month={month}
                     attendance={attendance}
+                    timeLogs={timeLogs}
                     refreshKey={salaryRefreshKey}
                     onPaid={() => setSalaryRefreshKey((k) => k + 1)}
                   />

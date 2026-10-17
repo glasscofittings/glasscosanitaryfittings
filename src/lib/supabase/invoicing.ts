@@ -113,7 +113,9 @@ export function calculateTax(
     sales_tax_amount: salesTaxAmount,
     further_tax_rate: furtherTaxRate,
     further_tax_amount: furtherTaxAmount,
-    total_payable: Math.round((roundedTaxable + salesTaxAmount + furtherTaxAmount) * 100) / 100,
+    total_payable:
+      Math.round((roundedTaxable + salesTaxAmount + furtherTaxAmount) * 100) /
+      100,
   };
 }
 
@@ -307,7 +309,10 @@ export async function fetchInvoiceById(
     return {
       ...r,
       parties: r.parties
-        ? ({ ...r.parties, is_registered: Boolean(r.parties.ntn_strn) } as Party)
+        ? ({
+            ...r.parties,
+            is_registered: Boolean(r.parties.ntn_strn),
+          } as Party)
         : r.parties,
     } as SalesInvoice;
   } catch (err) {
@@ -458,7 +463,10 @@ export async function createInvoice(invoice: {
       // "uniq_sales_invoices_quotation_id"`), so they must be classified first:
       // convertQuotationToInvoice matches on "duplicate key" to re-probe and
       // recover. Keep that wording intact even if Postgres phrases it differently.
-      if (code === "23505" || /duplicate key|unique (constraint|violation)/i.test(rawMessage)) {
+      if (
+        code === "23505" ||
+        /duplicate key|unique (constraint|violation)/i.test(rawMessage)
+      ) {
         return {
           invoice: null,
           error: /duplicate key/i.test(rawMessage)
@@ -513,7 +521,8 @@ export async function createInvoice(invoice: {
         }
         return {
           invoice: null,
-          error: "Invoice lines could not be saved, so nothing was recorded. Please retry.",
+          error:
+            "Invoice lines could not be saved, so nothing was recorded. Please retry.",
         };
       }
       const stockErrors = await applyStockMovement(items, "deduct");
@@ -848,9 +857,7 @@ export async function createInvoiceItems(
     discount_pkr: item.discount_pkr ?? 0,
   });
 
-  async function insert(
-    keepProductId: boolean,
-  ): Promise<{
+  async function insert(keepProductId: boolean): Promise<{
     ok: boolean;
     code?: string;
     rows: SalesInvoiceItem[];
@@ -1300,7 +1307,9 @@ function salesInvoiceNarration(invoice: SalesInvoice): string {
 }
 
 /** True when a journal entry already exists for this invoice's narration. */
-async function findSalesInvoiceJournal(invoiceNumber: string): Promise<boolean> {
+async function findSalesInvoiceJournal(
+  invoiceNumber: string,
+): Promise<boolean> {
   if (!SUPABASE_URL) return false;
   try {
     const res = await fetch(
@@ -1551,7 +1560,10 @@ export function generateInvoiceHTML(
   const totalDiscount = r2(totalLineDiscounts + extraDiscount);
   // Sales tax defaults to 0. We coerce to a number and treat any non-finite /
   // negative value as 0 so the PDF never invents a GST amount.
-  const salesTaxAmt = Math.max(0, r2(Number(invoice.sales_tax_amount_pkr ?? 0)));
+  const salesTaxAmt = Math.max(
+    0,
+    r2(Number(invoice.sales_tax_amount_pkr ?? 0)),
+  );
   const furtherTaxRate = invoice.further_tax_rate ?? 0;
   const furtherTaxAmt = r2(Number(invoice.further_tax_amount_pkr ?? 0));
   const totalQty = r2(
@@ -1672,7 +1684,7 @@ export function generateInvoiceHTML(
       .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#e5e7eb;font-weight:700;color:#09090b;}
+      tr.total-row td{background:#EBF3FA; font-weight:700;color:#09090b;}
       .lower{display:flex;justify-content:flex-end;margin-top:5mm;}
       /*------------------------------------------------------------- Summary Box -------------------------------------------------*/
       .summary-col{display:flex;flex-direction:column;gap:3px;width:38%;min-width:60mm;max-width:96mm;page-break-inside:avoid;}
@@ -1681,7 +1693,7 @@ export function generateInvoiceHTML(
       .summary td.amt{text-align:right;font-family:'Courier New',monospace;font-weight:700;white-space:nowrap;color:#09090b;}
       .summary tr.grand td{font-size:10pt;font-weight:700;padding-top:5px;padding-bottom:5px;color:#09090b;}
       .summary.grand-box{border:1px solid #212121ff;background:#e5e7eb;page-break-inside:avoid;}
-      .summary.grand-box td{background:#e5e7eb;}
+      .summary.grand-box td{background:#EBF3FA;}
       .signatures{display:flex;justify-content:space-between;gap:30px;margin-top:auto;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
       .sig{width:46%;text-align:center;font-size:10.5px;font-weight:700;color:#09090b;}
       .sig .ur{text-align:center;font-weight:600;}
@@ -1907,7 +1919,8 @@ export async function createDispatchRecord(record: {
   // Never persist an empty customer_name: callers may not have the party loaded,
   // so fall back to looking the name up via customer_id before the insert.
   const customerName =
-    record.customer_name?.trim() || (await fetchPartyNameById(record.customer_id));
+    record.customer_name?.trim() ||
+    (await fetchPartyNameById(record.customer_id));
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/dispatch_records`, {
       method: "POST",

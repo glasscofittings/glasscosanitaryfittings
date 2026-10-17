@@ -226,9 +226,9 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
       .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:900;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
-      .rule{border-top:1px solid #1b55a5ff;margin:8px 0;}
-      .subtitle{display:block;background:#1b55a5ff;color:#fff;font-size:13.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
-      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;color:#fff;}
+      .rule{border-top:1px solid #1D5298;margin:8px 0;}
+      .subtitle{display:block;background:#1D5298;color:#fff;font-size:13.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
+      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11.5px;color:#fff;}
       .meta{display:flex;justify-content:space-between;gap:10mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
       .to{font-size:10.5px;font-weight:700;color:#09090b;}
@@ -241,7 +241,7 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .kv .v{font-weight:700;text-align:right;white-space:nowrap;font-family:'Courier New',monospace;color:#09090b;}
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:2px solid #3c3f42ff;padding:5px 6px;vertical-align:middle;}
-      table.items thead th{background:#1b55a5ff;color:#fff;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
+      table.items thead th{background:#1D5298;color:#fff;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
       table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;color:#fff;}
       table.items tbody td{font-size:10.5px;color:#09090b;}
       table.items .ctr{text-align:center;}
@@ -252,7 +252,7 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#e5e7eb;font-weight:700;color:#09090b;}
+      tr.total-row td{background:#EBF3FA;font-weight:700;color:#09090b;}
       .lower{display:flex;justify-content:flex-end;margin-top:5mm;}
       /* Summary Box */
       .summary-col{display:flex;flex-direction:column;gap:3px;width:38%;min-width:60mm;max-width:96mm;page-break-inside:avoid;}
@@ -260,8 +260,8 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .summary td{padding:4px 8px;font-size:9pt;}
       .summary td.amt{text-align:right;font-family:'Courier New',monospace;font-weight:700;white-space:nowrap;color:#09090b;}
       .summary tr.grand td{font-size:10pt;font-weight:700;padding-top:5px;padding-bottom:5px;color:#09090b;}
-      .summary.grand-box{border:1px solid #212121ff;background:#e5e7eb;page-break-inside:avoid;}
-      .summary.grand-box td{background:#e5e7eb;}
+      .summary.grand-box{border:1px solid #1D5298;background:#EBF3FA;page-break-inside:avoid;}
+      .summary.grand-box td{background:#EBF3FA;color:#1D5298;}
       .terms{margin-top:5mm;border:1px solid #d4d4d8;padding:6px 9px;page-break-inside:avoid;}
       .terms h4{margin:0 0 3px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
       .terms p{margin:1px 0;font-size:9.5px;color:#27272a;white-space:pre-wrap;}
@@ -286,12 +286,12 @@ export function generateQuotationHTML(quotation: Quotation): string {
       <div class="head">
         <div class="brand-name">${esc(docTitle)}</div>
         <div class="rule"></div>
-        <div class="subtitle">Q U O T A T I O N&nbsp;&nbsp;/&nbsp;${urSpan(UR.quotation, "margin-left:4px;font-size:11px;letter-spacing:normal;")}</div>
+        <div class="subtitle">Q U O T A T I O N&nbsp;&nbsp;/&nbsp;${urSpan(UR.quotation, "margin-left:4px;font-size:11.5px;letter-spacing:normal;")}</div>
       </div>
 
       <div class="meta">
         <div class="meta-l">
-          <div class="to"><span>TO:</span>${urSpan(UR.billTo, "margin-left:6px;")}</div>
+          <div class="to"><span>TO:</span>${urSpan("وصول کنندہ", "margin-left:6px;")}</div>
           <div class="cust-name">${esc(q.customer_name) || "&mdash;"}</div>
           ${addressRow}
           ${contactRow}
@@ -299,7 +299,7 @@ export function generateQuotationHTML(quotation: Quotation): string {
         <div class="meta-r">
           ${metaRow("Mob", UR.phone, esc(contactPhone))}
           ${metaRow("Tel", UR.tel, esc(contactTel))}
-          ${metaRow("Quotation No", UR.quotationNo, esc(q.quotation_number))}
+          ${metaRow("QTN No", UR.quotationNo, esc(q.quotation_number))}
           ${metaRow("Date", UR.date, esc(formatDate(q.quotation_date)))}
           ${q.valid_until ? metaRow("Valid Until", UR.validUntil, esc(formatDate(q.valid_until))) : ""}
           ${metaRow("Page", UR.pageOf, "1 of 1")}
@@ -309,24 +309,24 @@ export function generateQuotationHTML(quotation: Quotation): string {
       <table class="items">
         <colgroup>
           <col style="width:6%">
-          <col style="width:25%">
+          <col style="width:28%">
           <col style="width:11%">
           <col style="width:8%">
           <col style="width:8%">
-          <col style="width:13%">
+          <col style="width:12%">
           <col style="width:11%">
-          <col style="width:18%">
+          <col style="width:16%">
         </colgroup>
         <thead>
           <tr>
-            ${th("SR. #", UR.srNo, "ctr")}
-            ${th("PRODUCT NAME", UR.productName)}
-            ${th("CODE", UR.code, "ctr")}
-            ${th("UNIT", UR.unit, "ctr")}
-            ${th("QTY", UR.qty, "ctr")}
-            ${th("RATE", UR.price, "num")}
-            ${th("DISC. %", UR.discPercent, "num")}
-            ${th("TOTAL PRICE", UR.totalPrice, "num")}
+            ${th("SR. #", "نمبر", "ctr")}
+            ${th("PRODUCT NAME", "پروڈکٹ کا نام")}
+            ${th("CODE", "کوڈ", "ctr")}
+            ${th("UNIT", "یونٹ", "ctr")}
+            ${th("QTY", "مقدار", "ctr")}
+            ${th("RATE", "قیمت", "num")}
+            ${th("DISC. %", "ڈسکاؤنٹ %", "num")}
+            ${th("TOTAL PRICE", "کل قیمت", "num")}
           </tr>
         </thead>
         <tbody>${itemRows}${totalRow}</tbody>
@@ -352,8 +352,8 @@ export function generateQuotationHTML(quotation: Quotation): string {
       <div class="disclaimer-note">* Note: This is a quotation proposal and does not constitute a final tax invoice or sale agreement.</div>
 
       <div class="signatures">
-        <div class="sig">${urUnder("Received By (Customer)", UR.receivedByCustomer)}</div>
-        <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
+        <div class="sig">${urUnder("Received By (Customer)", "وصول کنندہ (گاہک)")}</div>
+        <div class="sig">${urUnder("Authorised Signatory", "اختیار یافتہ دستخط کنندہ")}</div>
       </div>
 
       <div class="footer">

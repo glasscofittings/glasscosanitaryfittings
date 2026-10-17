@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { createWorker, type Worker } from "@/lib/supabase/labour";
 import { capitalizeFirst } from "@/lib/utils";
+import { DEFAULT_BASE_SALARY_PKR, defaultOvertimeRate } from "@/lib/salary";
 
 interface Props {
   open: boolean;
@@ -14,7 +15,8 @@ interface Props {
 export default function CreateWorkerModal({ open, onClose, onCreated }: Props) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
-  const [salary, setSalary] = useState("");
+  const [salary, setSalary] = useState(String(DEFAULT_BASE_SALARY_PKR));
+  const [overtimeRate, setOvertimeRate] = useState(String(defaultOvertimeRate(DEFAULT_BASE_SALARY_PKR)));
   const [joinDate, setJoinDate] = useState(new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -35,18 +37,25 @@ export default function CreateWorkerModal({ open, onClose, onCreated }: Props) {
       setError("Salary must be a positive number.");
       return;
     }
+    const overtimeNum = parseFloat(overtimeRate);
+    if (isNaN(overtimeNum) || overtimeNum < 0) {
+      setError("Overtime rate must be zero or a positive number.");
+      return;
+    }
     setSaving(true);
     try {
       const worker = await createWorker({
         full_name: name.trim(),
         role_designation: role.trim(),
         base_salary_pkr: salaryNum,
+        overtime_rate_pkr: overtimeNum,
         joining_date: joinDate,
       });
       onCreated(worker);
       setName("");
       setRole("");
-      setSalary("");
+      setSalary(String(DEFAULT_BASE_SALARY_PKR));
+      setOvertimeRate(String(defaultOvertimeRate(DEFAULT_BASE_SALARY_PKR)));
       setJoinDate(new Date().toISOString().slice(0, 10));
       onClose();
     } catch (err) {
@@ -101,7 +110,7 @@ export default function CreateWorkerModal({ open, onClose, onCreated }: Props) {
                 value={salary}
                 onChange={(e) => setSalary(e.target.value)}
                 className="glass-input w-full font-mono"
-                placeholder="45000"
+                placeholder={String(DEFAULT_BASE_SALARY_PKR)}
                 min="0"
               />
             </div>
@@ -114,6 +123,21 @@ export default function CreateWorkerModal({ open, onClose, onCreated }: Props) {
                 className="glass-input w-full"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-caption text-muted uppercase tracking-wider font-medium mb-1.5">Overtime Rate (PKR / hour)</label>
+            <input
+              type="number"
+              value={overtimeRate}
+              onChange={(e) => setOvertimeRate(e.target.value)}
+              className="glass-input w-full font-mono"
+              min="0"
+              step="any"
+            />
+            <p className="text-[10px] text-muted mt-1">
+              Paid for each hour worked after 5:00 PM. Suggested for this salary: PKR{" "}
+              {defaultOvertimeRate(parseFloat(salary) || 0).toLocaleString()}/hr (salary ÷ 30 days ÷ 9 hrs)
+            </p>
           </div>
 
           {error && (

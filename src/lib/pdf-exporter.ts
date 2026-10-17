@@ -3,15 +3,14 @@ import autoTable, { type CellHookData, type UserOptions } from 'jspdf-autotable'
 import type { SanitaryProduct, StockAlertLevel } from '@/types'
 import { computeStockAlert } from '@/lib/supabase/catalog'
 import type { Party } from '@/lib/supabase/crm'
-import type { Worker, AttendanceMap } from '@/lib/supabase/labour'
+import type { Worker, AttendanceMap, TimeLogMap } from '@/lib/supabase/labour'
 import type { WorkerLoan } from '@/lib/supabase/loans'
-import { calculateEarnedSalary } from '@/lib/salary'
+import { calculateEarnedSalary, formatMinutes } from '@/lib/salary'
 import type { LabourTask, LabourTaskStatus } from '@/lib/store/useLabourTaskStore'
 import { type InwardGatePass, effectiveAcceptedQty, normalizeUom } from '@/lib/supabase/procurement'
 import type { JournalEntryWithLines, FinancialStatements, PLRow, BalanceSheetRow } from '@/lib/supabase/ledger'
 import { numberToWords, type PaymentVoucher } from '@/lib/supabase/payment-vouchers'
 import type { Expense } from '@/lib/supabase/expenses'
-import { EXPENSE_CATEGORY_LABELS } from '@/lib/supabase/expenses'
 import type { ProductCostMarginSummary, ProductPurchase } from '@/lib/supabase/purchases'
 import type { Quotation } from '@/lib/supabase/quotations'
 import { isTauriRuntime } from '@/lib/desktop'
@@ -24,9 +23,8 @@ import {
   staticUrdu,
   type UrduNameMap,
 } from '@/lib/report-i18n'
-import { getCompanyLogoDataUrl, getExportCompanyName, getExportDocumentTitle, loadCompanyProfile, DEFAULT_COMPANY } from '@/lib/company-settings'
+import { getCompanyLogoDataUrl, getExportCompanyName, loadCompanyProfile, DEFAULT_COMPANY } from '@/lib/company-settings'
 import { COMPANY_HEADER, COMPANY_LEGAL_NAME, SERIF_FONT_FAMILY_PDF } from '@/lib/branding'
-import { REFERENCE_EMAIL, REFERENCE_PHONE } from '@/lib/supabase/invoicing'
 import { balanceAmountLabel, balanceSide } from '@/lib/party-statement'
 
 /* ─── Shared palette & layout ────────────────────────────────────────────── */
@@ -371,11 +369,11 @@ function minimalRowRules(): Pick<UserOptions, 'didDrawCell'> {
 
 /** Merges autoTable cell hooks so border rules can be layered onto existing hooks. */
 function chainCellHooks(
-  ...sets: (Partial<Pick<UserOptions, 'didParseCell' | 'didDrawCell'>> | undefined)[]
-): Partial<Pick<UserOptions, 'didParseCell' | 'didDrawCell'>> {
+  ...sets: (Pick<UserOptions, 'didParseCell' | 'didDrawCell'> | undefined)[]
+): Pick<UserOptions, 'didParseCell' | 'didDrawCell'> {
   const parses = sets.map((s) => s?.didParseCell).filter((f): f is NonNullable<typeof f> => Boolean(f))
   const draws = sets.map((s) => s?.didDrawCell).filter((f): f is NonNullable<typeof f> => Boolean(f))
-  const chained: Partial<Pick<UserOptions, 'didParseCell' | 'didDrawCell'>> = {}
+  const chained: Pick<UserOptions, 'didParseCell' | 'didDrawCell'> = {}
   if (parses.length) chained.didParseCell = (data) => parses.forEach((f) => f(data))
   if (draws.length) chained.didDrawCell = (data) => draws.forEach((f) => f(data))
   return chained
@@ -1465,12 +1463,13 @@ export async function exportWorkerPayslipPDF(
   loans: WorkerLoan[],
   year: number,
   month: number,
+  timeLogs: TimeLogMap = {},
   operatorName = 'Labour Supervisor'
 ): Promise<jsPDF> {
   const doc = createReportDoc('portrait')
   await ensureUrduFont(doc)
   const monthLabel = new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })
-  const salary = calculateEarnedSalary(worker, attendance, year, month)
+  const salary = calculateEarnedSalary(worker, attendance, year, month, timeLogs)
   const loanTaken = loans.reduce((a, l) => a + l.original_loan_amount, 0)
   const loanRemaining = loans.reduce((a, l) => a + l.current_balance, 0)
   const paidDays = salary.presentDays + salary.leaveDays
@@ -1612,6 +1611,9 @@ export async function exportWorkerPayslipPDF(
       ['Base Salary (monthly)', formatPKRCell(worker.base_salary_pkr)],
       [`Daily Rate (Base / ${salary.daysInMonth} days)`, `PKR ${salary.dailyRate.toFixed(2)}`],
       [`Paid Days (Present ${salary.presentDays} + Leave ${salary.leaveDays})`, String(paidDays)],
+      ['Basic Salary (paid days)', formatPKRCell(salary.basicSalary)],
+      [`Overtime (${formatMinutes(salary.overtimeMinutes)} x PKR ${salary.overtimeRate}/hr)`, formatPKRCell(salary.overtimePay)],
+      [`Undertime Deduction (${formatMinutes(salary.undertimeMinutes)} x PKR ${salary.hourlyRate.toFixed(2)}/hr)`, `- ${formatPKRCell(salary.undertimeDeduction)}`],
       ['Earned Salary', formatPKRCell(salary.earnedSalary)],
     ],
     columnStyles: { 1: { halign: 'right', cellWidth: 52, fontStyle: 'bold' } },
@@ -1631,7 +1633,7 @@ export async function exportWorkerPayslipPDF(
           data.cell.styles.textColor = [31, 41, 55]
           if (data.column.index === 1) data.cell.styles.halign = 'right'
         }
-        if (data.section === 'body' && data.row.index === 3) {
+        if (data.section === 'body' && data.row.index === 6) {
           data.cell.styles.textColor = C.crimson
           data.cell.styles.fontStyle = 'bold'
           data.cell.styles.fillColor = [254, 242, 242] // subtle red-50
@@ -2972,355 +2974,394 @@ export async function exportExpensesReportPDF(
   return doc
 }
 
-/** Single expense voucher — A4 portrait, styled after reference Sale Invoice layout */
+/**
+ * Individual Expense Voucher printable PDF.
+ *
+ * Redesigned to strictly match the reference standard template (SALE INVOICE
+ * blue style): navy serif brand header, #1D5298 sub-banner, bilingual meta
+ * grid, dark-blue bilingual table header, #EBF3FA grand-total box, three
+ * equal signature columns — with Amiri embedded so every Urdu glyph renders
+ * crisply with no mojibake.
+ */
 export async function exportExpenseVoucherPDF(
   expense: Expense,
-  options: { subtitle?: string; operatorName?: string } = {}
+  options: { operatorName?: string } = {}
 ): Promise<jsPDF> {
   const doc = createReportDoc('portrait')
   await ensureUrduFont(doc)
-
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const pageHeight = doc.internal.pageSize.getHeight()
-  const contentWidth = pageWidth - MARGIN * 2
-
+  const pageWidth = doc.internal.pageSize.getWidth() // 210mm
+  const pageHeight = doc.internal.pageSize.getHeight() // 297mm
+  const contentWidth = pageWidth - MARGIN * 2 // 182mm
   const profile = loadCompanyProfile()
-  const companyTitle = getExportDocumentTitle()
-  const legalName =
-    profile.name && profile.name.trim() !== DEFAULT_COMPANY.name
-      ? COMPANY_LEGAL_NAME
-      : `${DEFAULT_COMPANY.name.toUpperCase()} FITTINGS INDUSTRIES (PRIVATE) LIMITED`
+  const hasUrdu = doc.getFontList()['Amiri'] !== undefined
 
-  const contactPhone = profile.phone?.trim() || REFERENCE_PHONE
-  const contactTel = profile.telephone?.trim() || DEFAULT_COMPANY.telephone
-  const contactEmail = profile.email?.trim() || REFERENCE_EMAIL
-  const contactWebsite = profile.website?.trim() || 'www.glasscosanitary.com'
-  const socialParts = [
-    profile.facebook?.trim() ? `FB: ${profile.facebook.trim()}` : '',
-    profile.instagram?.trim() ? `IG: ${profile.instagram.trim()}` : '',
-    profile.whatsapp?.trim() ? `WhatsApp: ${profile.whatsapp.trim()}` : '',
-  ].filter(Boolean)
+  // Standard reference template tokens (SALE INVOICE blue style)
+  const BLUE_HEADER: RGB = [29, 82, 152] // #1D5298
+  const BLUE_LIGHT_BG: RGB = [235, 243, 250] // #EBF3FA
+  const BORDER_DARK: RGB = [60, 63, 66] // #3c3f42
+  const BORDER_BLUE: RGB = [29, 82, 152] // #1D5298
+  const SOFT_OUTLINE: RGB = [148, 163, 184] // soft outer box outline
 
-  const bannerBlue: RGB = [27, 85, 165] // #1b55a5 matching standard sale invoice styling
-  const tableBorderColor: RGB = [60, 63, 66]
-
-  // ── Top Header: Company Title Centered ──────────────────────────────────
-  let y = 14
+  // 1. Brand header — bold serif title centred in dark navy blue (#1D5298)
+  const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
   doc.setFont('times', 'bold')
   doc.setFontSize(22)
-  doc.setTextColor(...bannerBlue)
-  doc.text(companyTitle, pageWidth / 2, y, { align: 'center' })
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
 
-  // Thin separator line below title
-  y += 4
-  doc.setDrawColor(...bannerBlue)
-  doc.setLineWidth(0.6)
-  doc.line(MARGIN, y, pageWidth - MARGIN, y)
+  // Thin solid blue horizontal rule beneath the primary header
+  doc.setDrawColor(...BORDER_BLUE)
+  doc.setLineWidth(0.4)
+  doc.line(MARGIN, 17, pageWidth - MARGIN, 17)
 
-  // ── Prominent Blue Banner: Title / Urdu Subtitle ───────────────────────
-  y += 2
-  const bannerHeight = 8.5
-  doc.setFillColor(...bannerBlue)
-  doc.rect(MARGIN, y, contentWidth, bannerHeight, 'F')
+  // Sub-banner: full-width #1D5298 bar with centred bold white bilingual title
+  const bannerY = 19
+  const bannerHeight = 8
+  doc.setFillColor(...BLUE_HEADER)
+  doc.roundedRect(MARGIN, bannerY, contentWidth, bannerHeight, 1, 1, 'F')
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(11)
   doc.setTextColor(255, 255, 255)
-  const bannerTextY = y + 5.8
-  doc.text('E X P E N S E   V O U C H E R', pageWidth / 2 - 14, bannerTextY, { align: 'right' })
-  doc.text('/', pageWidth / 2 - 10, bannerTextY)
-  drawUrdu(doc, UR.expenseVoucher, pageWidth / 2 + 20, bannerTextY, {
-    fontSize: 10,
-    color: [255, 255, 255],
-    align: 'right',
-  })
+  const bannerTitleEn = 'EXPENSE VOUCHER'
+  const bannerTitleUr = 'واؤچر ایکسپینس'
 
-  // ── Metadata Block (Two-column layout matching reference image) ────────
-  y += bannerHeight + 6
-  const metaStartY = y
+  if (hasUrdu) {
+    // Measure both runs so the EN / UR pair sits optically centred in the bar.
+    doc.setFont('Amiri', 'normal')
+    doc.setFontSize(10.5)
+    const urW = doc.getTextWidth(bannerTitleUr)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    const enText = `${bannerTitleEn}  /  `
+    const enW = doc.getTextWidth(enText)
+    const startX = pageWidth / 2 - (enW + urW) / 2
+    doc.text(enText, startX, bannerY + 5.5)
+    drawUrdu(doc, bannerTitleUr, startX + enW, bannerY + 5.5, {
+      fontSize: 10.5,
+      color: [255, 255, 255],
+    })
+  } else {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.text(bannerTitleEn, pageWidth / 2, bannerY + 5.5, { align: 'center' })
+  }
 
-  // Left side: TO / Payee & Expense Category details
-  const categoryLabel = EXPENSE_CATEGORY_LABELS[expense.category] ?? expense.category
+  // 2. Meta details: left payee block + right bilingual key/value list
+  const metaY = bannerY + bannerHeight + 5 // 32mm
+
+  // Left block — PAYEE / VENDOR: / وصول کنندہ:
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...C.ink)
-  doc.text('TO:', MARGIN, y)
-  drawUrdu(doc, UR.payee, MARGIN + 18, y, { fontSize: 8.5, color: C.slate, align: 'right' })
+  doc.setFontSize(8.5)
+  doc.setTextColor(...C.slate)
+  const payeeLabelEn = 'PAYEE / VENDOR: / '
+  doc.text(payeeLabelEn, MARGIN, metaY + 3.5)
+  if (hasUrdu) {
+    drawUrdu(doc, 'وصول کنندہ:', MARGIN + doc.getTextWidth(payeeLabelEn), metaY + 3.5, {
+      fontSize: 8.5,
+      color: C.slate,
+    })
+  }
 
-  y += 5
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10.5)
-  doc.setTextColor(...C.ink)
-  doc.text(expense.payee_name || 'MISCELLANEOUS / VENDOR', MARGIN, y)
+  // Payee name — bold navy (#1D5298)
+  const payeeName = expense.payee_name?.trim() || expense.party?.name?.trim() || 'Counter / General Payee'
+  doc.setFont('times', 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text(payeeName, MARGIN, metaY + 9)
 
-  y += 4.5
+  // Address / sub details
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
-  doc.text(`Category: ${categoryLabel}`, MARGIN, y)
-  y += 4
-  if (expense.description?.trim()) {
-    const descLines = doc.splitTextToSize(expense.description.trim(), contentWidth * 0.45) as string[]
-    for (const dl of descLines.slice(0, 2)) {
-      doc.text(dl, MARGIN, y)
-      y += 4
+  let leftCurY = metaY + 13.5
+  const subDetails = [expense.party?.address?.trim(), expense.party?.phone?.trim()]
+    .filter((v): v is string => Boolean(v))
+    .join('  •  ')
+  if (subDetails) {
+    const lines = doc.splitTextToSize(subDetails, contentWidth * 0.5) as string[]
+    for (const line of lines.slice(0, 2)) {
+      doc.text(line, MARGIN, leftCurY)
+      leftCurY += 4.2
     }
   }
 
-  // Right side: Metadata (Mob, Tel, Voucher No, Date, Status, Page)
-  let rightY = metaStartY
-  const labelStartX = pageWidth - MARGIN - 72
-  const urduEndX = pageWidth - MARGIN - 38
-  const rightValX = pageWidth - MARGIN
+  // Category & ref notes
+  doc.text(`Category: ${expense.category}`, MARGIN, leftCurY)
+  leftCurY += 4.2
+  if (expense.notes?.trim()) {
+    const noteLines = doc.splitTextToSize(`Ref Note: ${expense.notes.trim()}`, contentWidth * 0.5) as string[]
+    for (const line of noteLines.slice(0, 2)) {
+      doc.text(line, MARGIN, leftCurY)
+      leftCurY += 4.2
+    }
+  }
 
-  const drawMetaRow = (enLabel: string, urLabel: string, val: string) => {
+  // Right block — clean 2-column right-aligned bilingual key/value list
+  const metaRightWidth = 78
+  const metaRightX = pageWidth - MARGIN - metaRightWidth
+  const contactPhone = profile.phone?.trim() || DEFAULT_COMPANY.phone
+  const contactTel = profile.telephone?.trim() || DEFAULT_COMPANY.telephone
+
+  const metaItems = [
+    { labelEn: 'Mob / ', labelUr: 'موبائل نمبر:', value: contactPhone },
+    { labelEn: 'Tel / ', labelUr: 'ٹیلی فون:', value: contactTel },
+    { labelEn: 'Expense No / ', labelUr: 'واؤچر نمبر:', value: expense.expense_number },
+    { labelEn: 'Date / ', labelUr: 'تاریخ:', value: formatDate(expense.expense_date) },
+    { labelEn: 'Payment Method / ', labelUr: 'طریقہ ادائیگی:', value: expense.payment_method },
+    { labelEn: 'Page / ', labelUr: 'صفحہ:', value: '1 of 1' },
+  ]
+
+  let curMetaY = metaY + 2
+  for (const item of metaItems) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.slate)
-    doc.text(enLabel + ':', labelStartX, rightY)
-    drawUrdu(doc, urLabel, urduEndX, rightY, { fontSize: 8, color: C.slate, align: 'right' })
-
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(...C.ink)
-    doc.text(val, rightValX, rightY, { align: 'right' })
-    rightY += 4.8
+    doc.text(item.labelEn, metaRightX, curMetaY)
+    if (hasUrdu) {
+      drawUrdu(doc, item.labelUr, metaRightX + doc.getTextWidth(item.labelEn), curMetaY, {
+        fontSize: 7.5,
+        color: C.slate,
+      })
+    }
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(9, 9, 11)
+    doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
+    curMetaY += 4
   }
 
-  drawMetaRow('Mob', UR.phone, contactPhone)
-  drawMetaRow('Tel', UR.tel, contactTel)
-  drawMetaRow('Voucher No', UR.voucherNo, expense.expense_number)
-  drawMetaRow('Date', UR.date, formatDate(expense.expense_date))
-  drawMetaRow('Payment Method', UR.paymentMethod, expense.payment_method)
-  drawMetaRow('Page', UR.pageOf, '1 of 1')
+  const tableStartY = Math.max(leftCurY + 2, curMetaY + 3, metaY + 27)
 
-  y = Math.max(y, rightY) + 3
-
-  // ── Main Details Table ────────────────────────────────────────────────
-  // Columns: [SR. #, CATEGORY / DESCRIPTION, PAYEE, PAYMENT METHOD, DEBIT ACCOUNT, CREDIT ACCOUNT, STATUS, AMOUNT]
-  const colWidths = [12, 42, 28, 22, 25, 25, 14, 14] // Total = 182mm (exact contentWidth)
-
-  const headCells: BilingualCell[] = [
-    { en: 'SR. #', ur: UR.srNo },
-    { en: 'CATEGORY / PARTICULARS', ur: UR.particulars },
-    { en: 'PAYEE', ur: UR.payee },
-    { en: 'METHOD', ur: UR.paymentMethod },
-    { en: 'DEBIT (EXP)', ur: UR.debitAccount },
-    { en: 'CREDIT (PAY)', ur: UR.creditAccount },
-    { en: 'STATUS', ur: UR.status },
-    { en: 'AMOUNT', ur: UR.amount },
-  ]
-
-  const debitLabel = expense.expense_account
+  // Accounts descriptions
+  const debitDesc = expense.expense_account
     ? `[${expense.expense_account.account_code}] ${expense.expense_account.account_name}`
-    : 'Expense'
+    : 'Debit Expense Account'
+  const creditDesc =
+    expense.status === 'UNPAID'
+      ? (expense.payable_account ? `[${expense.payable_account.account_code}] ${expense.payable_account.account_name}` : '[2001] Accounts Payable')
+      : (expense.payment_account ? `[${expense.payment_account.account_code}] ${expense.payment_account.account_name}` : 'Cash/Bank')
 
-  const creditLabel = expense.payment_account
-    ? `[${expense.payment_account.account_code}] ${expense.payment_account.account_name}`
-    : expense.payable_account
-    ? `[${expense.payable_account.account_code}] ${expense.payable_account.account_name}`
-    : 'Cash / Bank'
+  // 4. Line items table — #1D5298 bilingual header bar, dark blue column
+  // borders wrapped in a soft outer box outline, clean ~6px cell padding.
+  // Column widths sum to 182mm (contentWidth). ACCOUNTS gets extra room so
+  // the DR/CR account pairs stay on one line instead of wrapping awkwardly.
+  const columnWidths = [11, 28, 32, 40, 41, 30] // total 182mm
+  const halign: ('left' | 'center' | 'right')[] = ['center', 'center', 'left', 'left', 'left', 'right']
 
-  const bodyCells = [
-    [
-      '1',
-      `${categoryLabel}${expense.description ? ` - ${expense.description}` : ''}`,
-      expense.payee_name || '—',
-      expense.payment_method,
-      debitLabel,
-      creditLabel,
-      expense.status,
-      (expense.amount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    ],
-  ]
+  const columnStyles: UserOptions['columnStyles'] = {}
+  columnWidths.forEach((w, i) => {
+    columnStyles[i] = {
+      cellWidth: w,
+      halign: halign[i],
+    }
+  })
 
-  const footCells = [
-    'Total',
-    '',
-    '',
-    '',
-    '',
-    '',
-    '',
-    (expense.amount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  ]
-
-  const urduSize = 7.5
-  const tableCellPad = 2.5
-  const urduLineH = 4.0
+  const headerEn = ['SR. #', 'CATEGORY', 'PAYEE / VENDOR', 'DESCRIPTION', 'ACCOUNTS', 'AMOUNT (PKR)']
+  const headerUr = ['نمبر', 'کیٹیگری', 'وصول کنندہ', 'تفصیل', 'اکاؤنٹس', 'رقم']
 
   autoTable(doc, {
-    startY: y,
+    startY: tableStartY,
     theme: 'grid',
-    head: [headCells.map((c) => c.en)],
-    body: bodyCells,
-    foot: [footCells],
+    head: [headerEn],
+    body: [
+      [
+        '1',
+        expense.category,
+        payeeName,
+        expense.description || 'General Business Expense',
+        `DR: ${debitDesc}\nCR: ${creditDesc}`,
+        (expense.amount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      ],
+    ],
+    margin: { left: MARGIN, right: MARGIN, bottom: 28 },
     styles: {
-      cellPadding: tableCellPad,
+      cellPadding: 1.6, // ≈ 6px — clean padding that avoids crushed or awkwardly wrapped glyphs
       overflow: 'linebreak',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
+      fontSize: 8,
+      textColor: [9, 9, 11],
+      lineColor: BORDER_BLUE, // dark blue column borders
+      lineWidth: 0.25,
       valign: 'middle',
-      fontSize: 8.5,
-      textColor: [15, 23, 42],
     },
     headStyles: {
-      fillColor: bannerBlue,
+      fillColor: BLUE_HEADER,
       textColor: [255, 255, 255],
-      fontSize: 8,
+      fontSize: 7.5,
       fontStyle: 'bold',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
-      halign: 'left',
-      cellPadding: {
-        top: 2.2,
-        right: 2.2,
-        bottom: 5.8, // Reserved space for Urdu subtitle
-        left: 2.2,
-      },
+      valign: 'top',
+      minCellHeight: 11,
     },
-    bodyStyles: {
-      fontSize: 8.5,
-      textColor: [15, 23, 42],
-    },
-    footStyles: {
-      fillColor: [229, 231, 235],
-      textColor: [15, 23, 42],
-      fontSize: 8.5,
-      fontStyle: 'bold',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
-    },
-    columnStyles: {
-      0: { cellWidth: colWidths[0], halign: 'center' },
-      1: { cellWidth: colWidths[1], halign: 'left' },
-      2: { cellWidth: colWidths[2], halign: 'left' },
-      3: { cellWidth: colWidths[3], halign: 'center' },
-      4: { cellWidth: colWidths[4], halign: 'left' },
-      5: { cellWidth: colWidths[5], halign: 'left' },
-      6: { cellWidth: colWidths[6], halign: 'center' },
-      7: { cellWidth: colWidths[7], halign: 'right' },
-    },
-    didDrawCell: (data: CellHookData) => {
-      if (data.section === 'head') {
-        const col = data.column.index
-        const cell = headCells[col]
-        if (!cell?.ur) return
-
-        const halign = (col === 0 || col === 3 || col === 6)
-          ? 'center'
-          : col === 7
-          ? 'right'
-          : 'left'
-
-        const x = halign === 'right'
-          ? data.cell.x + data.cell.width - 2.2
-          : halign === 'center'
-          ? data.cell.x + data.cell.width / 2
-          : data.cell.x + 2.2
-
-        const baseline = data.cell.y + data.cell.height - 1.6
-        drawUrdu(doc, cell.ur, x, baseline, {
-          align: halign,
-          fontSize: urduSize,
-          color: [255, 255, 255],
-          maxWidth: data.cell.width - 4,
-          lineHeight: urduLineH,
-        })
+    columnStyles,
+    didParseCell: (data) => {
+      if (data.section === 'body') {
+        if (data.column.index === 0 || data.column.index === 5) {
+          data.cell.styles.font = 'courier'
+        }
+        if (data.column.index === 5) {
+          data.cell.styles.fontStyle = 'bold'
+        }
       }
+    },
+    didDrawCell: (data) => {
+      // Urdu half of each bilingual header, drawn with the embedded Amiri face
+      // so Arabic-script glyphs stay crisp (never the base-14 fonts, which have
+      // no Arabic coverage and would emit mojibake).
+      if (data.section !== 'head' || !hasUrdu) return
+      const urLabel = headerUr[data.column.index]
+      if (!urLabel) return
+      const align = halign[data.column.index]
+      const pad = 1.6
+      const x =
+        align === 'center'
+          ? data.cell.x + data.cell.width / 2
+          : align === 'right'
+            ? data.cell.x + data.cell.width - pad
+            : data.cell.x + pad
+      drawUrdu(doc, urLabel, x, data.cell.y + data.cell.height - 2.6, {
+        align,
+        fontSize: 7,
+        color: [255, 255, 255],
+      })
     },
   })
 
-  y = getFinalY(doc) + 5
+  // Soft outer box outline around the dark blue grid
+  doc.setDrawColor(...SOFT_OUTLINE)
+  doc.setLineWidth(0.5)
+  doc.rect(MARGIN, tableStartY, contentWidth, getFinalY(doc) - tableStartY, 'S')
 
-  // ── Summary Block on Bottom Right (matching reference image) ───────────
-  const summaryWidth = 78
-  const summaryX = pageWidth - MARGIN - summaryWidth
+  // 5. Amount in words (left) + totals summary block (bottom right)
+  const finalY = getFinalY(doc) + 6
 
-  // Grand Total box with shaded background and dark border
-  const grandBoxH = 9
-  doc.setFillColor(229, 231, 235)
-  doc.setDrawColor(33, 33, 33)
-  doc.setLineWidth(0.4)
-  doc.rect(summaryX, y, summaryWidth, grandBoxH, 'FD')
+  // Left block — AMOUNT IN WORDS / رقم بحروف with the formatted currency text below
+  const wordsBoxWidth = 100
+  const wordsBoxHeight = 23
+  doc.setFillColor(255, 255, 255)
+  doc.setDrawColor(...BORDER_BLUE)
+  doc.setLineWidth(0.3)
+  doc.rect(MARGIN, finalY, wordsBoxWidth, wordsBoxHeight, 'FD')
 
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...C.ink)
-  doc.text('Total Amount', summaryX + 2.5, y + 5.8)
-  drawUrdu(doc, '(کل رقم)', summaryX + 24, y + 5.8, { fontSize: 8, color: C.slate })
-
-  doc.setFontSize(9.5)
-  doc.text(`PKR ${(expense.amount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - MARGIN - 2.5, y + 5.8, { align: 'right' })
-
-  y += grandBoxH + 4
-
-  // Notes and Remarks if present
-  if (expense.notes?.trim()) {
-    y += 2
-    doc.setDrawColor(...C.line)
-    doc.setLineWidth(0.2)
-    doc.setFillColor(250, 250, 250)
-
-    const textToPrint = `Notes / Remarks: ${expense.notes.trim()}`
-    const noteLines = doc.splitTextToSize(textToPrint, contentWidth - 6) as string[]
-    const noteBoxH = noteLines.length * 3.5 + 4
-    doc.rect(MARGIN, y, contentWidth, noteBoxH, 'FD')
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(7.5)
-    doc.setTextColor(...C.slate)
-    let nY = y + 3.2
-    for (const nl of noteLines) {
-      doc.text(nl, MARGIN + 3, nY)
-      nY += 3.5
-    }
-    y += noteBoxH
+  doc.setFontSize(7.5)
+  doc.setTextColor(...BLUE_HEADER)
+  const wordsLabelEn = 'AMOUNT IN WORDS / '
+  doc.text(wordsLabelEn, MARGIN + 3, finalY + 4.5)
+  if (hasUrdu) {
+    drawUrdu(doc, 'رقم بحروف', MARGIN + 3 + doc.getTextWidth(wordsLabelEn), finalY + 4.5, {
+      fontSize: 7.5,
+      color: BLUE_HEADER,
+    })
   }
-
-  // ── Signature Block (Received By and Authorised Signatory) ─────────────
-  const sigY = Math.max(y + 10, pageHeight - 34)
-  const sigLineWidth = contentWidth * 0.42
-
-  // Left signature: Received By
-  doc.setDrawColor(15, 23, 42)
-  doc.setLineWidth(0.4)
-  doc.line(MARGIN, sigY, MARGIN + sigLineWidth, sigY)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(8.5)
-  doc.setTextColor(...C.ink)
-  doc.text('Received By', MARGIN + sigLineWidth / 2, sigY + 4, { align: 'center' })
-  drawUrdu(doc, UR.receivedBy, MARGIN + sigLineWidth / 2, sigY + 7.5, { align: 'center', fontSize: 7.5, color: C.slate })
-
-  // Right signature: Authorised Signatory / Approved By
-  const rightSigX = pageWidth - MARGIN - sigLineWidth
-  doc.line(rightSigX, sigY, rightSigX + sigLineWidth, sigY)
-  doc.text('Authorised Signatory', rightSigX + sigLineWidth / 2, sigY + 4, { align: 'center' })
-  drawUrdu(doc, UR.approvedBy, rightSigX + sigLineWidth / 2, sigY + 7.5, { align: 'center', fontSize: 7.5, color: C.slate })
-
-  // ── Company Footer Banner at the bottom ──────────────────────────────
-  const footerY = pageHeight - 12
-  doc.setDrawColor(...bannerBlue)
-  doc.setLineWidth(0.4)
-  doc.line(MARGIN, footerY - 3, pageWidth - MARGIN, footerY - 3)
-
-  doc.setFont('times', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...bannerBlue)
-  doc.text(legalName.toUpperCase(), pageWidth / 2, footerY + 0.5, { align: 'center' })
 
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(7.5)
-  doc.setTextColor(...C.ink)
-  const contactLine = `${contactEmail}   |   ${contactWebsite}   |   ${contactPhone}`
-  doc.text(contactLine, pageWidth / 2, footerY + 4.2, { align: 'center' })
-
-  if (socialParts.length > 0) {
-    doc.text(socialParts.join('   |   '), pageWidth / 2, footerY + 7.8, { align: 'center' })
+  doc.setFontSize(8)
+  doc.setTextColor(15, 23, 42)
+  const amountWords = numberToWords(expense.amount || 0)
+  const splitWords = doc.splitTextToSize(amountWords, wordsBoxWidth - 6) as string[]
+  let wordsY = finalY + 9
+  for (const line of splitWords.slice(0, 2)) {
+    doc.text(line, MARGIN + 3, wordsY)
+    wordsY += 3.8
+  }
+  if (hasUrdu) {
+    // Urdu rendering of the amount, right-aligned inside the words box
+    drawUrdu(doc, numberToUrduWords(expense.amount || 0), MARGIN + wordsBoxWidth - 3, wordsY + 1.6, {
+      align: 'right',
+      fontSize: 8,
+      color: BLUE_HEADER,
+      maxWidth: wordsBoxWidth - 10,
+    })
   }
 
-  outputReport(doc, `glassco_expense_${expense.expense_number}.pdf`)
+  // Right block — light blue fill (#EBF3FA) with a solid blue border (#1D5298)
+  const summaryBoxWidth = 80
+  const summaryBoxX = pageWidth - MARGIN - summaryBoxWidth
+  const summaryBoxHeight = 10
+  const formattedAmt = `PKR ${(expense.amount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  doc.setFillColor(...BLUE_LIGHT_BG)
+  doc.setDrawColor(...BORDER_BLUE)
+  doc.setLineWidth(0.4)
+  doc.rect(summaryBoxX, finalY, summaryBoxWidth, summaryBoxHeight, 'FD')
+
+  const totalLabelY = finalY + 6.2
+  doc.setTextColor(...BLUE_HEADER)
+  if (hasUrdu) {
+    const totalEn = 'Total Amount ('
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.text(totalEn, summaryBoxX + 3, totalLabelY)
+    const totalEnW = doc.getTextWidth(totalEn)
+    doc.setFont('Amiri', 'normal')
+    doc.setFontSize(8.5)
+    const totalUrW = doc.getTextWidth('کل رقم')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.text(')', summaryBoxX + 3 + totalEnW + totalUrW, totalLabelY)
+    drawUrdu(doc, 'کل رقم', summaryBoxX + 3 + totalEnW, totalLabelY, {
+      fontSize: 8.5,
+      color: BLUE_HEADER,
+    })
+  } else {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.text('Total Amount', summaryBoxX + 3, totalLabelY)
+  }
+
+  doc.setFont('courier', 'bold')
+  doc.setFontSize(9.5)
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text(formattedAmt, summaryBoxX + summaryBoxWidth - 3, totalLabelY, { align: 'right' })
+
+  // 6. Signatures — three equal-width columns
+  const sigY = pageHeight - 38
+  const sigColW = contentWidth / 3
+  const signatureCols = [
+    { en: 'Prepared By', ur: 'تیار کنندہ' },
+    { en: 'Approved By', ur: 'منظور کنندہ' },
+    { en: 'Received By', ur: 'وصول کنندہ' },
+  ]
+
+  doc.setDrawColor(15, 23, 42)
+  doc.setLineWidth(0.3)
+  doc.line(MARGIN, sigY, pageWidth - MARGIN, sigY)
+
+  signatureCols.forEach((sig, i) => {
+    const cx = MARGIN + sigColW * i + sigColW / 2
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.setTextColor(9, 9, 11)
+    doc.text(sig.en, cx, sigY + 4.5, { align: 'center' })
+    if (hasUrdu) {
+      drawUrdu(doc, sig.ur, cx, sigY + 9, { align: 'center', fontSize: 8.5, color: [9, 9, 11] })
+    }
+  })
+
+  // 7. Bottom footer — thin top border, centred legal name and contact line
+  const totalPages = doc.getNumberOfPages()
+  for (let pNum = 1; pNum <= totalPages; pNum++) {
+    doc.setPage(pNum)
+
+    doc.setDrawColor(...BORDER_DARK)
+    doc.setLineWidth(0.2)
+    doc.line(MARGIN, pageHeight - 15, pageWidth - MARGIN, pageHeight - 15)
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(24, 24, 27)
+    doc.text(COMPANY_LEGAL_NAME.toUpperCase(), pageWidth / 2, pageHeight - 11, { align: 'center' })
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(82, 82, 82)
+    const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
+    doc.text(contactLine, pageWidth / 2, pageHeight - 7, { align: 'center' })
+  }
+
+  outputReport(doc, `expense_voucher_${expense.expense_number}.pdf`)
   return doc
 }
 
+/** Product Purchase Cost and Profit Margin Summary PDF Report */
 export async function exportProductCostMarginReportPDF(
   summaries: ProductCostMarginSummary[],
   options: { subtitle?: string; operatorName?: string; costingMethod?: string } = {}
@@ -3385,352 +3426,402 @@ export async function exportProductCostMarginReportPDF(
   return doc
 }
 
-/** Product Purchases History PDF Report — styled after reference Sale Invoice layout */
+/** Product Purchases History PDF Report — Redesigned to match Sale Invoice template aesthetics */
 export async function exportProductPurchasesReportPDF(
   purchases: ProductPurchase[],
   options: { subtitle?: string; operatorName?: string } = {}
 ): Promise<jsPDF> {
-  const doc = createReportDoc('portrait')
+  const doc = createReportDoc('landscape')
   await ensureUrduFont(doc)
-
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const pageHeight = doc.internal.pageSize.getHeight()
-  const contentWidth = pageWidth - MARGIN * 2
-
+  const pageWidth = doc.internal.pageSize.getWidth() // 297mm
+  const pageHeight = doc.internal.pageSize.getHeight() // 210mm
+  const contentWidth = pageWidth - MARGIN * 2 // 269mm
   const profile = loadCompanyProfile()
-  const companyTitle = getExportDocumentTitle()
-  const legalName =
-    profile.name && profile.name.trim() !== DEFAULT_COMPANY.name
-      ? COMPANY_LEGAL_NAME
-      : `${DEFAULT_COMPANY.name.toUpperCase()} FITTINGS INDUSTRIES (PRIVATE) LIMITED`
+  const hasUrdu = doc.getFontList()['Amiri'] !== undefined
 
-  const contactPhone = profile.phone?.trim() || REFERENCE_PHONE
-  const contactTel = profile.telephone?.trim() || DEFAULT_COMPANY.telephone
-  const contactEmail = profile.email?.trim() || REFERENCE_EMAIL
-  const contactWebsite = profile.website?.trim() || 'www.glasscosanitary.com'
-  const socialParts = [
-    profile.facebook?.trim() ? `FB: ${profile.facebook.trim()}` : '',
-    profile.instagram?.trim() ? `IG: ${profile.instagram.trim()}` : '',
-    profile.whatsapp?.trim() ? `WhatsApp: ${profile.whatsapp.trim()}` : '',
-  ].filter(Boolean)
+  // Invoice Branding Tokens
+  const BLUE_HEADER: RGB = [27, 85, 165] // #1b55a5
+  const BLUE_LIGHT_BG: RGB = [235, 243, 250] // #ebf3fa
+  const BORDER_DARK: RGB = [60, 63, 66] // #3c3f42
+  const BORDER_BLUE: RGB = [27, 85, 165] // #1b55a5
 
-  const bannerBlue: RGB = [27, 85, 165] // #1b55a5 matching standard sale invoice styling
-  const tableBorderColor: RGB = [60, 63, 66]
-
-  // ── Top Header: Company Title Centered ──────────────────────────────────
-  let y = 14
+  // 1. Company Header (Centered, bold serif)
+  const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
   doc.setFont('times', 'bold')
   doc.setFontSize(22)
-  doc.setTextColor(...bannerBlue)
-  doc.text(companyTitle, pageWidth / 2, y, { align: 'center' })
+  doc.setTextColor(9, 9, 11)
+  doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
 
-  // Thin separator line below title
-  y += 4
-  doc.setDrawColor(...bannerBlue)
-  doc.setLineWidth(0.6)
-  doc.line(MARGIN, y, pageWidth - MARGIN, y)
+  // Thin blue separator rule
+  doc.setDrawColor(...BORDER_BLUE)
+  doc.setLineWidth(0.4)
+  doc.line(MARGIN, 17, pageWidth - MARGIN, 17)
 
-  // ── Prominent Blue Banner: Title / Urdu Subtitle ───────────────────────
-  y += 2
-  const bannerHeight = 8.5
-  doc.setFillColor(...bannerBlue)
-  doc.rect(MARGIN, y, contentWidth, bannerHeight, 'F')
+  // 2. Solid Blue Title Banner
+  const bannerY = 19
+  const bannerHeight = 7.5
+  doc.setFillColor(...BLUE_HEADER)
+  doc.roundedRect(MARGIN, bannerY, contentWidth, bannerHeight, 1, 1, 'F')
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(11)
-  doc.setTextColor(255, 255, 255)
-  const bannerTextY = y + 5.8
-  doc.text('P U R C H A S E   O R D E R S   R E P O R T', pageWidth / 2 - 14, bannerTextY, { align: 'right' })
-  doc.text('/', pageWidth / 2 - 10, bannerTextY)
-  drawUrdu(doc, UR.purchaseOrders, pageWidth / 2 + 24, bannerTextY, {
-    fontSize: 10,
-    color: [255, 255, 255],
-    align: 'right',
-  })
-
-  // ── Metadata Block (Two-column layout matching reference image) ────────
-  y += bannerHeight + 6
-  const metaStartY = y
-
-  // Left side: TO / Filter & Scope details
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...C.ink)
-  doc.text('TO:', MARGIN, y)
-  drawUrdu(doc, UR.billTo, MARGIN + 18, y, { fontSize: 8.5, color: C.slate, align: 'right' })
-
-  y += 5
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10.5)
-  doc.setTextColor(...C.ink)
-  doc.text(options.subtitle?.split('|')?.[0]?.trim() || 'PURCHASE DEPARTMENT', MARGIN, y)
+  doc.setTextColor(255, 255, 255)
+  const bannerTitleEn = 'PURCHASE ORDERS & LANDED COST REPORT'
+  const bannerTitleUr = 'پرچیز آرڈر رپورٹ'
 
-  y += 4.5
-  doc.setFont('helvetica', 'normal')
+  if (hasUrdu) {
+    const enW = doc.getTextWidth(bannerTitleEn + '  /  ')
+    const startX = pageWidth / 2 - (enW + 28) / 2
+    doc.text(bannerTitleEn + '  /  ', startX, bannerY + 5.2)
+    drawUrdu(doc, bannerTitleUr, startX + enW, bannerY + 5.2, {
+      fontSize: 10,
+      color: [255, 255, 255],
+    })
+  } else {
+    doc.text(bannerTitleEn, pageWidth / 2, bannerY + 5.2, { align: 'center' })
+  }
+
+  // 3. Metadata Header Block
+  const metaY = bannerY + bannerHeight + 3.5
+  const generatedDate = new Date().toLocaleDateString('en-PK', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+  const generatedTime = new Date().toLocaleTimeString('en-PK', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).toLowerCase()
+  const operator = options.operatorName || 'Purchase Dept'
+  const subtitleInfo = options.subtitle || `Procurement History (${purchases.length} Orders)`
+
+  // Left side: Subtitle / Scope
+  doc.setFont('helvetica', 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
-  if (options.subtitle) {
-    const subParts = options.subtitle.split('|').slice(1).map((s) => s.trim()).filter(Boolean)
-    for (const p of subParts) {
-      doc.text(p, MARGIN, y)
-      y += 4
-    }
-  }
-  doc.text(`Operator: ${options.operatorName || 'Admin'}`, MARGIN, y)
-  y += 4
+  doc.text('REPORT SCOPE:', MARGIN, metaY + 3.5)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  doc.setTextColor(15, 23, 42)
+  doc.text(subtitleInfo, MARGIN + 28, metaY + 3.5)
 
-  // Right side: Metadata (Mob, Tel, Report No, Date, Page)
-  let rightY = metaStartY
-  const labelStartX = pageWidth - MARGIN - 72
-  const urduEndX = pageWidth - MARGIN - 38
-  const rightValX = pageWidth - MARGIN
+  // Right side: Aligned metadata block
+  const metaRightWidth = 72
+  const metaRightX = pageWidth - MARGIN - metaRightWidth
 
-  const drawMetaRow = (enLabel: string, urLabel: string, val: string) => {
+  const metaItems = [
+    { label: 'Generated Date', value: `${generatedDate}, ${generatedTime}` },
+    { label: 'Operator', value: operator },
+    { label: 'Page No', value: 'Page 1 of 1' },
+  ]
+
+  let curMetaY = metaY + 2
+  for (const item of metaItems) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.slate)
-    doc.text(enLabel + ':', labelStartX, rightY)
-    drawUrdu(doc, urLabel, urduEndX, rightY, { fontSize: 8, color: C.slate, align: 'right' })
-
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(...C.ink)
-    doc.text(val, rightValX, rightY, { align: 'right' })
-    rightY += 4.8
+    doc.text(item.label, metaRightX, curMetaY)
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(9, 9, 11)
+    doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
+    curMetaY += 3.8
   }
 
-  const dateStamp = formatDate(new Date().toISOString())
-  drawMetaRow('Mob', UR.phone, contactPhone)
-  drawMetaRow('Tel', UR.tel, contactTel)
-  drawMetaRow('Report No', UR.referenceNo, `POR-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`)
-  drawMetaRow('Date', UR.date, dateStamp)
-  drawMetaRow('Page', UR.pageOf, '1 of 1')
+  const tableStartY = Math.max(metaY + 14, curMetaY + 1)
 
-  y = Math.max(y, rightY) + 3
+  // Calculations
+  const totalQty = purchases.reduce((sum, p) => sum + (p.quantity || 0), 0)
+  const totalSubtotal = purchases.reduce((sum, p) => sum + (p.purchase_subtotal_pkr || 0), 0)
+  const totalDiscounts = purchases.reduce((sum, p) => sum + (p.discount_pkr || 0), 0)
+  const totalTaxFreight = purchases.reduce(
+    (sum, p) => sum + ((p.tax_amount_pkr || 0) + (p.additional_cost_pkr || 0)),
+    0
+  )
+  const grandLandedCost = purchases.reduce((sum, p) => sum + (p.purchase_total_pkr || 0), 0)
 
-  // ── Main Items Table ──────────────────────────────────────────────────
-  // Columns matching standard 8-column table structure:
-  // [SR. #, PRODUCT NAME, DATE, QTY, RATE, DISC., TAX/FRT, TOTAL PRICE]
-  const colWidths = [12, 54, 20, 15, 23, 18, 18, 22] // Sum = 182mm (exact contentWidth)
-
-  const headCells: BilingualCell[] = [
-    { en: 'SR. #', ur: UR.srNo },
-    { en: 'PRODUCT / SUPPLIER', ur: UR.productName },
-    { en: 'DATE', ur: UR.date },
-    { en: 'QTY', ur: UR.qty },
-    { en: 'RATE', ur: UR.price },
-    { en: 'DISC.', ur: UR.discount },
-    { en: 'TAX/FRT', ur: UR.taxFreight },
-    { en: 'TOTAL', ur: UR.totalPrice },
+  // 4. Main Data Table with Recalibrated Column Widths (sum = 269mm = contentWidth)
+  //    Landscape A4 (297mm) − 2×14mm margins = 269mm
+  //    Courier 7pt metrics ≈ 1.48mm/char; Helvetica proportional ≈ 1.5mm/char avg.
+  //    Purchase # "PUR-2026-00002" = 14 chars × 1.48 + 4mm padding ≈ 25mm → 30mm safe
+  //    Date "13 Oct 2026" = 11 chars × 1.48 + 4mm ≈ 20mm → 23mm safe
+  //    Status "CONFIRMED" (bold) ≈ 9 chars × 1.6 + 4mm ≈ 18mm → 20mm safe
+  const columnWidths = [8, 30, 23, 40, 51, 13, 21, 22, 17, 24, 20] // total 269mm
+  const halign: ('left' | 'center' | 'right')[] = [
+    'center', // SR.#
+    'center', // PURCHASE #
+    'center', // DATE
+    'left',   // SUPPLIER
+    'left',   // PRODUCT NAME
+    'right',  // QTY
+    'right',  // RATE
+    'right',  // SUBTOTAL
+    'right',  // DISCOUNT
+    'right',  // TAX/FREIGHT
+    'center', // STATUS
   ]
 
-  const totalQty = purchases.reduce((sum, p) => sum + p.quantity, 0)
-  const totalSubtotal = purchases.reduce((sum, p) => sum + p.purchase_subtotal_pkr, 0)
-  const totalDiscounts = purchases.reduce((sum, p) => sum + p.discount_pkr, 0)
-  const totalTaxes = purchases.reduce((sum, p) => sum + p.tax_amount_pkr + p.additional_cost_pkr, 0)
-  const grandTotal = purchases.reduce((sum, p) => sum + p.purchase_total_pkr, 0)
+  // Columns that should NOT wrap (codes, dates, numbers, status)
+  const noWrapCols = new Set([0, 1, 2, 5, 6, 7, 8, 9, 10])
 
-  const bodyCells = purchases.map((p, i) => [
-    String(i + 1),
-    `${p.product_name}${p.supplier_name ? ` (${p.supplier_name})` : ''}`,
-    formatDate(p.purchase_date),
-    String(p.quantity),
-    (p.purchase_rate || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    p.discount_pkr > 0
-      ? (p.discount_pkr || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : '0.00',
-    ((p.tax_amount_pkr || 0) + (p.additional_cost_pkr || 0)).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    (p.purchase_total_pkr || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  ])
-
-  const footCells = [
-    'Total',
-    '',
-    '',
-    String(totalQty),
-    '',
-    '',
-    '',
-    grandTotal.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  ]
-
-  const urduSize = 7.5
-  const tableCellPad = 2.5
-  const urduLineH = 4.0
+  const columnStyles: UserOptions['columnStyles'] = {}
+  columnWidths.forEach((w, i) => {
+    columnStyles[i] = {
+      cellWidth: w,
+      halign: halign[i],
+      // Supplier & Product Name: allow clean line-breaks; all others: ellipsize to one line
+      overflow: noWrapCols.has(i) ? 'ellipsize' : 'linebreak',
+    }
+  })
 
   autoTable(doc, {
-    startY: y,
+    startY: tableStartY,
     theme: 'grid',
-    head: [headCells.map((c) => c.en)],
-    body: bodyCells,
-    foot: [footCells],
+    head: [
+      [
+        'SR.#',
+        'PURCHASE #',
+        'DATE',
+        'SUPPLIER',
+        'PRODUCT NAME',
+        'QTY',
+        'RATE (PKR)',
+        'SUBTOTAL',
+        'DISC.',
+        'TAX / FREIGHT',
+        'STATUS',
+      ],
+    ],
+    body: purchases.map((p, idx) => [
+      String(idx + 1),
+      p.purchase_number,
+      formatDate(p.purchase_date),
+      p.supplier_name,
+      p.product_name,
+      `${p.quantity} ${p.unit_of_measure || 'PCS'}`,
+      Math.round(p.purchase_rate).toLocaleString('en-PK'),
+      Math.round(p.purchase_subtotal_pkr).toLocaleString('en-PK'),
+      p.discount_pkr > 0 ? `-${Math.round(p.discount_pkr).toLocaleString('en-PK')}` : '—',
+      Math.round((p.tax_amount_pkr || 0) + (p.additional_cost_pkr || 0)).toLocaleString('en-PK'),
+      p.status.toUpperCase(),
+    ]),
+    foot: [
+      [
+        '',
+        '',
+        '',
+        `${purchases.length} Orders`,
+        `${[...new Set(purchases.map(p => p.product_name))].length} Products`,
+        totalQty.toLocaleString('en-PK'),
+        '',
+        Math.round(totalSubtotal).toLocaleString('en-PK'),
+        totalDiscounts > 0 ? `-${Math.round(totalDiscounts).toLocaleString('en-PK')}` : '—',
+        Math.round(totalTaxFreight).toLocaleString('en-PK'),
+        '',
+      ],
+    ],
+    margin: { left: MARGIN, right: MARGIN, bottom: 28 },
     styles: {
-      cellPadding: tableCellPad,
-      overflow: 'linebreak',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
+      cellPadding: { horizontal: 2.5, vertical: 2 },
+      overflow: 'ellipsize',
+      fontSize: 7,
+      textColor: [9, 9, 11],
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
       valign: 'middle',
-      fontSize: 8.5,
-      textColor: [15, 23, 42],
+      minCellHeight: 5.5,
     },
     headStyles: {
-      fillColor: bannerBlue,
+      fillColor: BLUE_HEADER,
       textColor: [255, 255, 255],
-      fontSize: 8,
+      fontSize: 7,
       fontStyle: 'bold',
-      lineColor: tableBorderColor,
+      lineColor: [29, 82, 152],
       lineWidth: 0.3,
-      halign: 'left',
-      cellPadding: {
-        top: 2.2,
-        right: 2.2,
-        bottom: 5.8, // Reserved space for Urdu subtitle
-        left: 2.2,
-      },
-    },
-    bodyStyles: {
-      fontSize: 8.5,
-      textColor: [15, 23, 42],
+      halign: 'center',
+      valign: 'middle',
+      cellPadding: { horizontal: 2, vertical: 2.5 },
     },
     footStyles: {
-      fillColor: [229, 231, 235],
-      textColor: [15, 23, 42],
-      fontSize: 8.5,
+      fillColor: BLUE_LIGHT_BG,
+      textColor: BLUE_HEADER,
+      fontSize: 7,
       fontStyle: 'bold',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
+      valign: 'middle',
     },
-    columnStyles: {
-      0: { cellWidth: colWidths[0], halign: 'center' },
-      1: { cellWidth: colWidths[1], halign: 'left' },
-      2: { cellWidth: colWidths[2], halign: 'center' },
-      3: { cellWidth: colWidths[3], halign: 'center' },
-      4: { cellWidth: colWidths[4], halign: 'right' },
-      5: { cellWidth: colWidths[5], halign: 'right' },
-      6: { cellWidth: colWidths[6], halign: 'right' },
-      7: { cellWidth: colWidths[7], halign: 'right' },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252], // very subtle slate-50
     },
-    didDrawCell: (data: CellHookData) => {
-      if (data.section === 'head') {
-        const col = data.column.index
-        const cell = headCells[col]
-        if (!cell?.ur) return
-
-        const halign = (col === 0 || col === 2 || col === 3)
-          ? 'center'
-          : (col === 4 || col === 5 || col === 6 || col === 7)
-          ? 'right'
-          : 'left'
-
-        const x = halign === 'right'
-          ? data.cell.x + data.cell.width - 2.2
-          : halign === 'center'
-          ? data.cell.x + data.cell.width / 2
-          : data.cell.x + 2.2
-
-        const baseline = data.cell.y + data.cell.height - 1.6
-        drawUrdu(doc, cell.ur, x, baseline, {
-          align: halign,
-          fontSize: urduSize,
-          color: [255, 255, 255],
-          maxWidth: data.cell.width - 4,
-          lineHeight: urduLineH,
-        })
+    columnStyles,
+    didParseCell: (data) => {
+      if (data.section === 'body') {
+        // Monospace font for codes, dates, and numeric columns
+        if ([1, 2, 5, 6, 7, 8, 9].includes(data.column.index)) {
+          data.cell.styles.font = 'courier'
+          data.cell.styles.fontSize = 7
+        }
+        if (data.column.index === 10) {
+          // Status badge styling
+          data.cell.styles.fontStyle = 'bold'
+          data.cell.styles.fontSize = 6.5
+          const val = String(data.cell.raw).toUpperCase()
+          if (val === 'CONFIRMED') {
+            data.cell.styles.textColor = [22, 163, 74]  // green-600
+          } else if (val === 'DRAFT') {
+            data.cell.styles.textColor = [217, 119, 6]  // amber-600
+          } else if (val === 'CANCELLED') {
+            data.cell.styles.textColor = [148, 163, 184] // slate-400
+          } else {
+            data.cell.styles.textColor = [220, 38, 38]   // red-600
+          }
+        }
+        // SR.# and index numbers
+        if (data.column.index === 0) {
+          data.cell.styles.font = 'courier'
+          data.cell.styles.fontStyle = 'bold'
+          data.cell.styles.textColor = [100, 116, 139] // slate-500
+        }
+      }
+      if (data.section === 'foot') {
+        // Totals row: monospace for numeric columns
+        if ([5, 7, 8, 9].includes(data.column.index)) {
+          data.cell.styles.font = 'courier'
+        }
+        // Summary labels for supplier/product counts
+        if ([3, 4].includes(data.column.index)) {
+          data.cell.styles.textColor = [71, 85, 105] // slate-600
+          data.cell.styles.fontStyle = 'normal'
+          data.cell.styles.fontSize = 6.5
+        }
       }
     },
   })
 
-  y = getFinalY(doc) + 5
+  // 5. Summary & Totals Block (Bottom Right, matching invoice style)
+  let finalY = getFinalY(doc) + 4
+  const neededSummaryHeight = 46
 
-  // ── Summary Block on Bottom Right (matching reference image) ───────────
-  const summaryWidth = 78
-  const summaryX = pageWidth - MARGIN - summaryWidth
+  if (finalY + neededSummaryHeight > pageHeight - 24) {
+    doc.addPage()
+    finalY = 16
+  }
 
-  const summaryRows: Array<{ en: string; ur: string; val: string }> = [
-    {
-      en: 'Discount / Extra Discount (XD)',
-      ur: UR.discountXd,
-      val: `PKR  ${(totalDiscounts || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    },
-    {
-      en: 'Sales Tax / Freight',
-      ur: UR.taxFreight,
-      val: `PKR  ${(totalTaxes || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    },
+  // Left side of bottom section: Order Count Summary Chip
+  doc.setFillColor(...BLUE_LIGHT_BG)
+  doc.setDrawColor(...BORDER_BLUE)
+  doc.setLineWidth(0.3)
+  doc.roundedRect(MARGIN, finalY, 110, 10, 1.5, 1.5, 'FD')
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text(
+    `TOTAL ORDERS: ${purchases.length}   |   TOTAL QUANTITY: ${totalQty.toLocaleString()} UNITS`,
+    MARGIN + 5,
+    finalY + 6.2
+  )
+
+  // Right side: Bordered blue container summary
+  const summaryBoxWidth = 84
+  const summaryBoxX = pageWidth - MARGIN - summaryBoxWidth
+  const summaryRows = [
+    { label: 'Total Subtotal', value: `PKR ${Math.round(totalSubtotal).toLocaleString()}` },
+    { label: 'Total Discount', value: totalDiscounts > 0 ? `-PKR ${Math.round(totalDiscounts).toLocaleString()}` : 'PKR 0' },
+    { label: 'Total Tax / Freight', value: `PKR ${Math.round(totalTaxFreight).toLocaleString()}` },
   ]
 
-  let sumY = y
+  let sY = finalY
+  doc.setFillColor(255, 255, 255)
+  doc.setDrawColor(...BORDER_DARK)
+  doc.setLineWidth(0.2)
+  doc.rect(summaryBoxX, sY, summaryBoxWidth, summaryRows.length * 5.2, 'FD')
+
   for (const row of summaryRows) {
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8.5)
-    doc.setTextColor(...C.ink)
-    doc.text(row.en, summaryX, sumY)
-    drawUrdu(doc, row.ur, summaryX, sumY + 3.8, { fontSize: 7.5, color: C.slate })
+    doc.setFontSize(7.5)
+    doc.setTextColor(15, 23, 42)
+    doc.text(row.label, summaryBoxX + 3, sY + 3.8)
 
-    doc.setFont('helvetica', 'bold')
-    doc.text(row.val, pageWidth - MARGIN, sumY + 2, { align: 'right' })
-    sumY += 8.5
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(9, 9, 11)
+    doc.text(row.value, summaryBoxX + summaryBoxWidth - 3, sY + 3.8, { align: 'right' })
+    sY += 5.2
   }
 
-  // Grand Total box with shaded background and dark border
-  const grandBoxH = 9
-  doc.setFillColor(229, 231, 235)
-  doc.setDrawColor(33, 33, 33)
+  // Grand Total Box in Soft Blue (#EBF3FA)
+  const grandBoxHeight = 7.5
+  doc.setFillColor(...BLUE_LIGHT_BG)
+  doc.setDrawColor(...BORDER_BLUE)
   doc.setLineWidth(0.4)
-  doc.rect(summaryX, sumY, summaryWidth, grandBoxH, 'FD')
+  doc.rect(summaryBoxX, sY, summaryBoxWidth, grandBoxHeight, 'FD')
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...C.ink)
-  doc.text('Total Amount', summaryX + 2.5, sumY + 5.8)
-  drawUrdu(doc, '(کل رقم)', summaryX + 24, sumY + 5.8, { fontSize: 8, color: C.slate })
-
-  doc.setFontSize(9.5)
-  doc.text(`PKR ${grandTotal.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - MARGIN - 2.5, sumY + 5.8, { align: 'right' })
-
-  y = sumY + grandBoxH + 4
-
-  // ── Signature Block (Received By and Authorised Signatory) ─────────────
-  const sigY = Math.max(y + 10, pageHeight - 34)
-  const sigLineWidth = contentWidth * 0.42
-
-  // Left signature: Received By
-  doc.setDrawColor(15, 23, 42)
-  doc.setLineWidth(0.4)
-  doc.line(MARGIN, sigY, MARGIN + sigLineWidth, sigY)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8.5)
-  doc.setTextColor(...C.ink)
-  doc.text('Received By (Customer)', MARGIN + sigLineWidth / 2, sigY + 4, { align: 'center' })
-  drawUrdu(doc, UR.receivedByCustomer, MARGIN + sigLineWidth / 2, sigY + 7.5, { align: 'center', fontSize: 7.5, color: C.slate })
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text('Grand Total (Landed Cost)', summaryBoxX + 3, sY + 5)
 
-  // Right signature: Authorised Signatory
-  const rightSigX = pageWidth - MARGIN - sigLineWidth
-  doc.line(rightSigX, sigY, rightSigX + sigLineWidth, sigY)
-  doc.text('Authorised Signatory', rightSigX + sigLineWidth / 2, sigY + 4, { align: 'center' })
-  drawUrdu(doc, UR.authorisedSignatory, rightSigX + sigLineWidth / 2, sigY + 7.5, { align: 'center', fontSize: 7.5, color: C.slate })
-
-  // ── Company Footer Banner at the bottom ──────────────────────────────
-  const footerY = pageHeight - 12
-  doc.setDrawColor(...bannerBlue)
-  doc.setLineWidth(0.4)
-  doc.line(MARGIN, footerY - 3, pageWidth - MARGIN, footerY - 3)
-
-  doc.setFont('times', 'bold')
+  doc.setFont('courier', 'bold')
   doc.setFontSize(9)
-  doc.setTextColor(...bannerBlue)
-  doc.text(legalName.toUpperCase(), pageWidth / 2, footerY + 0.5, { align: 'center' })
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text(`PKR ${Math.round(grandLandedCost).toLocaleString()}`, summaryBoxX + summaryBoxWidth - 3, sY + 5, {
+    align: 'right',
+  })
 
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(7.5)
-  doc.setTextColor(...C.ink)
-  const contactLine = `${contactEmail}   |   ${contactWebsite}   |   ${contactPhone}`
-  doc.text(contactLine, pageWidth / 2, footerY + 4.2, { align: 'center' })
+  // 6. Signatures Section
+  const sigY = Math.max(sY + grandBoxHeight + 8, pageHeight - 24)
+  const sigWidth = 70
 
-  if (socialParts.length > 0) {
-    doc.text(socialParts.join('   |   '), pageWidth / 2, footerY + 7.8, { align: 'center' })
+  // Prepared By line
+  doc.setDrawColor(15, 23, 42)
+  doc.setLineWidth(0.3)
+  doc.line(MARGIN, sigY, MARGIN + sigWidth, sigY)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.setTextColor(9, 9, 11)
+  doc.text('Prepared By', MARGIN + sigWidth / 2, sigY + 3.8, { align: 'center' })
+  if (hasUrdu) {
+    drawUrdu(doc, 'تیار کنندہ', MARGIN + sigWidth / 2, sigY + 8, { align: 'center', fontSize: 8, color: [9, 9, 11] })
   }
 
-  outputReport(doc, `purchases_report_${new Date().toISOString().slice(0, 10)}.pdf`)
+  // Authorised Signatory line
+  doc.line(pageWidth - MARGIN - sigWidth, sigY, pageWidth - MARGIN, sigY)
+  doc.text('Authorised Signatory', pageWidth - MARGIN - sigWidth / 2, sigY + 3.8, { align: 'center' })
+  if (hasUrdu) {
+    drawUrdu(doc, 'مجاز دستخط', pageWidth - MARGIN - sigWidth / 2, sigY + 8, { align: 'center', fontSize: 8, color: [9, 9, 11] })
+  }
+
+  // 7. Footer / Contact Banner (Very bottom of page)
+  const totalPages = doc.getNumberOfPages()
+  for (let pNum = 1; pNum <= totalPages; pNum++) {
+    doc.setPage(pNum)
+
+    // Footer hairline
+    doc.setDrawColor(...BORDER_DARK)
+    doc.setLineWidth(0.2)
+    doc.line(MARGIN, pageHeight - 9.5, pageWidth - MARGIN, pageHeight - 9.5)
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    doc.setTextColor(24, 24, 27)
+    doc.text(COMPANY_LEGAL_NAME.toUpperCase(), MARGIN, pageHeight - 6.5)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(6.5)
+    doc.setTextColor(82, 82, 82)
+    const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
+    doc.text(contactLine, pageWidth / 2, pageHeight - 6.5, { align: 'center' })
+
+    doc.setFont('courier', 'normal')
+    doc.setFontSize(7)
+    doc.text(`Page ${pNum} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 6.5, { align: 'right' })
+  }
+
+  const dateStamp = new Date().toISOString().slice(0, 10)
+  outputReport(doc, `purchase_orders_landed_cost_report_${dateStamp}.pdf`)
   return doc
 }
 
@@ -3745,393 +3836,381 @@ export async function exportProductPurchasesReportPDF(
  * "QUOTATION — NOT A FINAL INVOICE" and carries signature/date spaces for
  * both the customer and the company.
  */
+/**
+ * Professional A4 quotation PDF for the Quotations module.
+ * Redesigned to strictly match the reference standard template (SALE INVOICE blue style).
+ */
 export async function exportQuotationPDF(
   quotation: Quotation,
   options: { operatorName?: string } = {}
 ): Promise<jsPDF> {
   const doc = createReportDoc('portrait')
   await ensureUrduFont(doc)
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const pageHeight = doc.internal.pageSize.getHeight()
-  const contentWidth = pageWidth - MARGIN * 2
-
+  const pageWidth = doc.internal.pageSize.getWidth() // 210mm
+  const pageHeight = doc.internal.pageSize.getHeight() // 297mm
+  const contentWidth = pageWidth - MARGIN * 2 // 182mm
   const profile = loadCompanyProfile()
-  const companyTitle = getExportDocumentTitle()
-  const legalName = profile.name && profile.name.trim() !== DEFAULT_COMPANY.name
-    ? COMPANY_LEGAL_NAME
-    : `${DEFAULT_COMPANY.name.toUpperCase()} FITTINGS INDUSTRIES (PRIVATE) LIMITED`
+  const hasUrdu = doc.getFontList()['Amiri'] !== undefined
 
-  const contactPhone = profile.phone?.trim() || REFERENCE_PHONE
-  const contactTel = profile.telephone?.trim() || DEFAULT_COMPANY.telephone
-  const contactEmail = profile.email?.trim() || REFERENCE_EMAIL
-  const contactWebsite = profile.website?.trim() || 'www.glasscosanitary.com'
-  const socialParts = [
-    profile.facebook?.trim() ? `FB: ${profile.facebook.trim()}` : '',
-    profile.instagram?.trim() ? `IG: ${profile.instagram.trim()}` : '',
-    profile.whatsapp?.trim() ? `WhatsApp: ${profile.whatsapp.trim()}` : '',
-  ].filter(Boolean)
+  // Standard Template Blue Tokens
+  const BLUE_HEADER: RGB = [29, 82, 152] // #1D5298
+  const BLUE_LIGHT_BG: RGB = [235, 243, 250] // #EBF3FA
+  const BORDER_DARK: RGB = [60, 63, 66] // #3c3f42
+  const BORDER_BLUE: RGB = [29, 82, 152] // #1D5298
 
-  const bannerBlue: RGB = [27, 85, 165] // #1b55a5 matching invoice styling
-  const tableBorderColor: RGB = [60, 63, 66]
-
-  // Top header: Company title centered
-  let y = 14
+  // 1. Header: Company Title (Centered at top)
+  const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
   doc.setFont('times', 'bold')
   doc.setFontSize(22)
-  doc.setTextColor(...bannerBlue)
-  doc.text(companyTitle, pageWidth / 2, y, { align: 'center' })
+  doc.setTextColor(9, 9, 11)
+  doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
 
-  // Thin line below title
-  y += 4
-  doc.setDrawColor(...bannerBlue)
-  doc.setLineWidth(0.6)
-  doc.line(MARGIN, y, pageWidth - MARGIN, y)
+  // Thin blue separator rule
+  doc.setDrawColor(...BORDER_BLUE)
+  doc.setLineWidth(0.4)
+  doc.line(MARGIN, 17, pageWidth - MARGIN, 17)
 
-  // Prominent blue banner: "QUOTATION / کوٹیشن"
-  y += 2
-  const bannerHeight = 8.5
-  doc.setFillColor(...bannerBlue)
-  doc.rect(MARGIN, y, contentWidth, bannerHeight, 'F')
+  // Sub-banner: Dark blue background (#1D5298) with white bold centered text: "QUOTATION / کوٹیشن"
+  const bannerY = 19
+  const bannerHeight = 8
+  doc.setFillColor(...BLUE_HEADER)
+  doc.roundedRect(MARGIN, bannerY, contentWidth, bannerHeight, 1, 1, 'F')
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(12)
-  doc.setTextColor(255, 255, 255)
-  // English banner title left, Urdu right (cleanly separated)
-  const bannerTextY = y + 5.8
-  doc.text('Q U O T A T I O N', pageWidth / 2 - 14, bannerTextY, { align: 'right' })
-  doc.text('/', pageWidth / 2 - 10, bannerTextY)
-  drawUrdu(doc, UR.quotation, pageWidth / 2 + 18, bannerTextY, {
-    fontSize: 10.5,
-    color: [255, 255, 255],
-    align: 'right',
-  })
-
-  // Customer block (left) and Metadata block (right)
-  y += bannerHeight + 6
-  const metaStartY = y
-
-  // Left side: TO / Customer details
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...C.ink)
-  doc.text('TO:', MARGIN, y)
-  drawUrdu(doc, UR.billTo, MARGIN + 18, y, { fontSize: 8.5, color: C.slate, align: 'right' })
-
-  y += 5
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
-  doc.setTextColor(...C.ink)
-  doc.text(quotation.customer_name || '—', MARGIN, y)
+  doc.setTextColor(255, 255, 255)
+  const bannerTitleEn = 'QUOTATION'
+  const bannerTitleUr = 'کوٹیشن'
 
-  y += 4.5
+  if (hasUrdu) {
+    const enW = doc.getTextWidth(bannerTitleEn + '  /  ')
+    const startX = pageWidth / 2 - (enW + 18) / 2
+    doc.text(bannerTitleEn + '  /  ', startX, bannerY + 5.5)
+    drawUrdu(doc, bannerTitleUr, startX + enW, bannerY + 5.5, {
+      fontSize: 10.5,
+      color: [255, 255, 255],
+    })
+  } else {
+    doc.text(bannerTitleEn, pageWidth / 2, bannerY + 5.5, { align: 'center' })
+  }
+
+  // 2. Meta Information Section: Two-column grid layout
+  const metaY = bannerY + bannerHeight + 5
+
+  // Left column: Customer details (TO / وصول کنندہ)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.5)
+  doc.setTextColor(...C.slate)
+  doc.text('TO:', MARGIN, metaY + 3.5)
+  if (hasUrdu) {
+    drawUrdu(doc, 'وصول کنندہ', MARGIN + doc.getTextWidth('TO:  '), metaY + 3.5, { fontSize: 8.5, color: [...C.slate] as [number, number, number] })
+  }
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(9, 9, 11)
+  doc.text(quotation.customer_name || 'Counter Customer', MARGIN, metaY + 9)
+
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
+  let leftCurY = metaY + 13.5
   if (quotation.customer_address?.trim()) {
-    const addressLines = doc.splitTextToSize(quotation.customer_address.trim(), contentWidth * 0.48) as string[]
-    for (const line of addressLines) {
-      doc.text(line, MARGIN, y)
-      y += 4
+    const lines = doc.splitTextToSize(quotation.customer_address.trim(), contentWidth * 0.5) as string[]
+    for (const line of lines.slice(0, 2)) {
+      doc.text(line, MARGIN, leftCurY)
+      leftCurY += 4.2
     }
   }
   if (quotation.customer_phone?.trim()) {
-    doc.text(quotation.customer_phone.trim(), MARGIN, y)
-    y += 4
+    doc.text(quotation.customer_phone.trim(), MARGIN, leftCurY)
+    leftCurY += 4.2
   }
 
-  // Right side: Metadata (Mob, Tel, Quotation No, Date, Valid Until, Page)
-  let rightY = metaStartY
-  const labelStartX = pageWidth - MARGIN - 72
-  const urduEndX = pageWidth - MARGIN - 38
-  const rightValX = pageWidth - MARGIN
+  // Right column: Quotation details (Mob, Tel, QTN No, Date, Page 1 of 1)
+  const metaRightWidth = 75
+  const metaRightX = pageWidth - MARGIN - metaRightWidth
+  const contactPhone = profile.phone?.trim() || DEFAULT_COMPANY.phone
+  const contactTel = profile.telephone?.trim() || DEFAULT_COMPANY.telephone
 
-  const drawMetaRow = (enLabel: string, urLabel: string, val: string) => {
+  const metaItems = [
+    { label: 'Mob', value: contactPhone },
+    { label: 'Tel', value: contactTel },
+    { label: 'QTN No', value: quotation.quotation_number },
+    { label: 'Date', value: formatDate(quotation.quotation_date) },
+    ...(quotation.valid_until ? [{ label: 'Valid Until', value: formatDate(quotation.valid_until) }] : []),
+    { label: 'Page', value: '1 of 1' },
+  ]
+
+  let curMetaY = metaY + 2
+  for (const item of metaItems) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.slate)
-    doc.text(enLabel + ':', labelStartX, rightY)
-    drawUrdu(doc, urLabel, urduEndX, rightY, { fontSize: 8, color: C.slate, align: 'right' })
-
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(...C.ink)
-    doc.text(val, rightValX, rightY, { align: 'right' })
-    rightY += 4.8
+    doc.text(item.label, metaRightX, curMetaY)
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(9, 9, 11)
+    doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
+    curMetaY += 4
   }
 
-  drawMetaRow('Mob', UR.phone, contactPhone)
-  drawMetaRow('Tel', UR.tel, contactTel)
-  drawMetaRow('Quotation No', UR.quotationNo, quotation.quotation_number)
-  drawMetaRow('Date', UR.date, formatDate(quotation.quotation_date))
-  if (quotation.valid_until) {
-    drawMetaRow('Valid Until', UR.validUntil, formatDate(quotation.valid_until))
-  }
-  drawMetaRow('Page', UR.pageOf, '1 of 1')
+  const tableStartY = Math.max(leftCurY + 2, curMetaY + 2, metaY + 24)
 
-  y = Math.max(y, rightY) + 3
-
-  // Items table: Exact 8 columns with bilingual headers
-  // [SR. #, PRODUCT NAME, CODE, UNIT, QTY, RATE, DISC. %, TOTAL PRICE]
+  // 3. Line Items Table (Tax% column removed, matching the reference grid)
   const items = (quotation.items ?? []).map((item, index) => ({
     index: index + 1,
     name: item.product_name,
-    code: item.product_code || '—',
+    code: item.product_code ?? '',
     unit: item.unit || 'PCS',
     quantity: Number(item.quantity) || 0,
     price: Number(item.unit_price_pkr) || 0,
     discount: Number(item.discount_percent) || 0,
     lineTotal: Number(item.line_total_pkr) || 0,
   }))
-
-  const colWidths = [12, 54, 18, 14, 15, 23, 18, 28] // total 182mm (contentWidth)
   const totalQty = items.reduce((a, i) => a + i.quantity, 0)
   const grossLinesTotal = items.reduce((a, i) => a + (i.quantity * i.price), 0)
 
-  const headCells: BilingualCell[] = [
-    { en: 'SR. #', ur: UR.srNo },
-    { en: 'PRODUCT NAME', ur: UR.productName },
-    { en: 'CODE', ur: UR.code },
-    { en: 'UNIT', ur: UR.unit },
-    { en: 'QTY', ur: UR.qty },
-    { en: 'RATE', ur: UR.price },
-    { en: 'DISC. %', ur: UR.discPercent },
-    { en: 'TOTAL PRICE', ur: UR.totalPrice },
+  // Column widths sum = 182mm (contentWidth)
+  const columnWidths = [12, 52, 20, 16, 16, 22, 18, 26]
+  const halign: ('left' | 'center' | 'right')[] = [
+    'center',
+    'left',
+    'center',
+    'center',
+    'center',
+    'right',
+    'right',
+    'right',
   ]
 
-  // Body data cells contain ONLY the data itself — no Urdu duplication over the numeric values!
-  const bodyCells = items.map((i) => [
-    String(i.index),
-    i.name,
-    i.code,
-    i.unit,
-    String(i.quantity),
-    (i.price || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    (i.discount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    (i.lineTotal || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  ])
-
-  const footCells = [
-    'Total',
-    '',
-    '',
-    '',
-    String(totalQty),
-    '',
-    '',
-    (grossLinesTotal || Number(quotation.subtotal_pkr) || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-  ]
-
-  const urduSize = 7.5
-  const tableCellPad = 2.5
-  const urduLineH = 4.0
+  const columnStyles: UserOptions['columnStyles'] = {}
+  columnWidths.forEach((w, i) => {
+    columnStyles[i] = { cellWidth: w, halign: halign[i] }
+  })
 
   autoTable(doc, {
-    startY: y,
+    startY: tableStartY,
     theme: 'grid',
-    head: [headCells.map((c) => c.en)],
-    body: bodyCells,
-    foot: [footCells],
+    head: [
+      [
+        'SR. #',
+        'PRODUCT NAME',
+        'CODE',
+        'UNIT',
+        'QTY',
+        'RATE',
+        'DISC. %',
+        'TOTAL PRICE',
+      ],
+    ],
+    body: items.map((i) => [
+      String(i.index),
+      i.name,
+      i.code || '—',
+      i.unit,
+      String(i.quantity),
+      Math.round(i.price).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      i.discount ? `${i.discount}%` : '0%',
+      Math.round(i.lineTotal).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    ]),
+    foot: [
+      [
+        'TOTAL',
+        '',
+        '',
+        '',
+        String(totalQty),
+        '',
+        '',
+        Math.round(grossLinesTotal).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      ],
+    ],
+    margin: { left: MARGIN, right: MARGIN, bottom: 28 },
     styles: {
-      cellPadding: tableCellPad,
+      cellPadding: 2.5,
       overflow: 'linebreak',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
+      fontSize: 8,
+      textColor: [9, 9, 11],
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
       valign: 'middle',
-      fontSize: 8.5,
-      textColor: [15, 23, 42],
     },
     headStyles: {
-      fillColor: bannerBlue,
+      fillColor: BLUE_HEADER,
       textColor: [255, 255, 255],
-      fontSize: 8,
+      fontSize: 7.5,
       fontStyle: 'bold',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
-      halign: 'left',
-      cellPadding: {
-        top: 2.2,
-        right: 2.2,
-        bottom: 5.8, // Reserve space specifically for the Urdu line below English
-        left: 2.2,
-      },
-    },
-    bodyStyles: {
-      fontSize: 8.5,
-      textColor: [15, 23, 42],
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
+      halign: 'center',
     },
     footStyles: {
-      fillColor: [229, 231, 235],
-      textColor: [15, 23, 42],
-      fontSize: 8.5,
+      fillColor: BLUE_LIGHT_BG,
+      textColor: [9, 9, 11],
+      fontSize: 8,
       fontStyle: 'bold',
-      lineColor: tableBorderColor,
-      lineWidth: 0.3,
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
     },
-    columnStyles: {
-      0: { cellWidth: colWidths[0], halign: 'center' },
-      1: { cellWidth: colWidths[1], halign: 'left' },
-      2: { cellWidth: colWidths[2], halign: 'center' },
-      3: { cellWidth: colWidths[3], halign: 'center' },
-      4: { cellWidth: colWidths[4], halign: 'center' },
-      5: { cellWidth: colWidths[5], halign: 'right' },
-      6: { cellWidth: colWidths[6], halign: 'right' },
-      7: { cellWidth: colWidths[7], halign: 'right' },
-    },
-    didDrawCell: (data: CellHookData) => {
-      // Draw Urdu subheadings inside header cells only
-      if (data.section === 'head') {
-        const col = data.column.index
-        const cell = headCells[col]
-        if (!cell?.ur) return
-
-        const halign = (col === 0 || col === 2 || col === 3 || col === 4)
-          ? 'center'
-          : (col === 5 || col === 6 || col === 7)
-          ? 'right'
-          : 'left'
-
-        const x = halign === 'right'
-          ? data.cell.x + data.cell.width - 2.2
-          : halign === 'center'
-          ? data.cell.x + data.cell.width / 2
-          : data.cell.x + 2.2
-
-        const baseline = data.cell.y + data.cell.height - 1.6
-        drawUrdu(doc, cell.ur, x, baseline, {
-          align: halign,
-          fontSize: urduSize,
-          color: [255, 255, 255],
-          maxWidth: data.cell.width - 4,
-          lineHeight: urduLineH,
-        })
+    columnStyles,
+    didParseCell: (data) => {
+      if (data.section === 'body') {
+        if ([0, 2, 4, 5, 6, 7].includes(data.column.index)) {
+          data.cell.styles.font = 'courier'
+        }
+      }
+      if (data.section === 'foot') {
+        if (data.column.index === 0) {
+          data.cell.colSpan = 4
+        }
+        if (data.column.index === 7 || data.column.index === 4) {
+          data.cell.styles.font = 'courier'
+          data.cell.styles.fontStyle = 'bold'
+        }
       }
     },
   })
 
-  y = getFinalY(doc) + 5
+  // 4. Summary & Totals Block (Bottom Right)
+  let finalY = getFinalY(doc) + 5
+  const subtotal = Number(quotation.subtotal_pkr) || 0
+  const discount = Number(quotation.discount_pkr) || 0
+  const tax = Number(quotation.tax_amount_pkr) || 0
+  const grand = Number(quotation.grand_total_pkr) || 0
 
-  // Summary section on the bottom right (mirroring invoice layout)
-  const summaryWidth = 78
-  const summaryX = pageWidth - MARGIN - summaryWidth
-  const summarySubtotal = Number(quotation.subtotal_pkr) || 0
-  const summaryDiscount = Number(quotation.discount_pkr) || 0
-  const summaryTax = Number(quotation.tax_amount_pkr) || 0
-  const summaryGrand = Number(quotation.grand_total_pkr) || 0
+  // Left side: Terms & Conditions and Disclaimer note
+  const leftBlockWidth = 98
+  let termsBoxHeight = 0
+  if (quotation.terms?.trim() || quotation.notes?.trim()) {
+    const termLines = [
+      ...(quotation.terms?.trim() ? [`Terms: ${quotation.terms.trim()}`] : []),
+      ...(quotation.notes?.trim() ? [`Notes: ${quotation.notes.trim()}`] : []),
+    ]
+    termsBoxHeight = 16
+    doc.setFillColor(255, 255, 255)
+    doc.setDrawColor(...BORDER_DARK)
+    doc.setLineWidth(0.2)
+    doc.rect(MARGIN, finalY, leftBlockWidth, termsBoxHeight, 'FD')
 
-  const summaryRows: Array<{ en: string; ur: string; val: string }> = [
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(...BLUE_HEADER)
+    doc.text('TERMS & NOTES:', MARGIN + 3, finalY + 4.5)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(15, 23, 42)
+    let tY = finalY + 8.5
+    for (const t of termLines) {
+      doc.text(doc.splitTextToSize(t, leftBlockWidth - 6)[0] || '', MARGIN + 3, tY)
+      tY += 3.8
+    }
+  }
+
+  // Right side: Summary box
+  const summaryBoxWidth = 80
+  const summaryBoxX = pageWidth - MARGIN - summaryBoxWidth
+
+  const summaryRows = [
     {
-      en: 'Discount / Extra Discount (XD)',
-      ur: UR.discountXd,
-      val: `PKR  ${(summaryDiscount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      labelEn: 'Discount / Extra Discount (XD)',
+      labelUr: 'ڈسکاؤنٹ / اضافی ڈسکاؤنٹ (ایکس ڈی)',
+      value: discount > 0 ? `-PKR ${discount.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'PKR 0.00',
     },
     {
-      en: 'Sales Tax (GST)',
-      ur: UR.salesTax,
-      val: `PKR  ${(summaryTax || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      labelEn: 'Sales Tax (GST)',
+      labelUr: 'سیلز ٹیکس',
+      value: `PKR ${tax.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     },
   ]
 
-  let sumY = y
-  for (const row of summaryRows) {
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8.5)
-    doc.setTextColor(...C.ink)
-    doc.text(row.en, summaryX, sumY)
-    drawUrdu(doc, row.ur, summaryX, sumY + 3.8, { fontSize: 7.5, color: C.slate })
+  let sY = finalY
+  doc.setFillColor(255, 255, 255)
+  doc.setDrawColor(...BORDER_DARK)
+  doc.setLineWidth(0.2)
+  doc.rect(summaryBoxX, sY, summaryBoxWidth, summaryRows.length * 6, 'FD')
 
-    doc.setFont('helvetica', 'bold')
-    doc.text(row.val, pageWidth - MARGIN, sumY + 2, { align: 'right' })
-    sumY += 8.5
-  }
-
-  // Grand Total box with shaded background and dark border
-  const grandBoxH = 9
-  doc.setFillColor(229, 231, 235)
-  doc.setDrawColor(33, 33, 33)
-  doc.setLineWidth(0.4)
-  doc.rect(summaryX, sumY, summaryWidth, grandBoxH, 'FD')
-
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...C.ink)
-  doc.text('Total Amount', summaryX + 2.5, sumY + 5.8)
-  drawUrdu(doc, '(کل رقم)', summaryX + 24, sumY + 5.8, { fontSize: 8, color: C.slate })
-
-  doc.setFontSize(9.5)
-  doc.text(`PKR ${summaryGrand.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - MARGIN - 2.5, sumY + 5.8, { align: 'right' })
-
-  y = sumY + grandBoxH + 4
-
-  // Subtle note distinguishing quotation from invoice
-  doc.setFont('helvetica', 'italic')
-  doc.setFontSize(7.5)
-  doc.setTextColor(...C.muted)
-  doc.text('* Note: This is a quotation proposal and does not constitute a final tax invoice or sale agreement.', pageWidth / 2, y + 2, { align: 'center' })
-
-  // Terms and Notes if present
-  if (quotation.terms?.trim() || quotation.notes?.trim()) {
-    y += 5
-    doc.setDrawColor(...C.line)
-    doc.setLineWidth(0.2)
-    doc.setFillColor(250, 250, 250)
-
-    const textToPrint = [
-      quotation.terms?.trim() ? `Terms: ${quotation.terms.trim()}` : null,
-      quotation.notes?.trim() ? `Notes: ${quotation.notes.trim()}` : null,
-    ].filter(Boolean).join(' | ')
-
-    const termLines = doc.splitTextToSize(textToPrint, contentWidth - 6) as string[]
-    const termBoxH = termLines.length * 3.5 + 4
-    doc.rect(MARGIN, y, contentWidth, termBoxH, 'FD')
+  for (const r of summaryRows) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
-    doc.setTextColor(...C.slate)
-    let tY = y + 3.2
-    for (const tl of termLines) {
-      doc.text(tl, MARGIN + 3, tY)
-      tY += 3.5
-    }
-    y += termBoxH
+    doc.setTextColor(15, 23, 42)
+    doc.text(r.labelEn, summaryBoxX + 3, sY + 3.8)
+
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(9, 9, 11)
+    doc.text(r.value, summaryBoxX + summaryBoxWidth - 3, sY + 4, { align: 'right' })
+    sY += 6
   }
 
-  // Signature Block at bottom
-  const sigY = Math.max(y + 10, pageHeight - 34)
-  const sigLineWidth = contentWidth * 0.42
-
-  // Customer signature
-  doc.setDrawColor(15, 23, 42)
+  // Total Quoted Amount Box: Soft blue tint (#EBF3FA), solid blue border (#1D5298)
+  const grandBoxHeight = 12
+  doc.setFillColor(...BLUE_LIGHT_BG)
+  doc.setDrawColor(...BORDER_BLUE)
   doc.setLineWidth(0.4)
-  doc.line(MARGIN, sigY, MARGIN + sigLineWidth, sigY)
+  doc.rect(summaryBoxX, sY, summaryBoxWidth, grandBoxHeight, 'FD')
+
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8.5)
-  doc.setTextColor(...C.ink)
-  doc.text('Received By (Customer)', MARGIN + sigLineWidth / 2, sigY + 4, { align: 'center' })
-  drawUrdu(doc, UR.receivedByCustomer, MARGIN + sigLineWidth / 2, sigY + 7.5, { align: 'center', fontSize: 7.5, color: C.slate })
+  doc.setTextColor(...BLUE_HEADER)
+  doc.text('Total Amount', summaryBoxX + 3, sY + 5)
+  if (hasUrdu) {
+    drawUrdu(doc, 'کل رقم', summaryBoxX + 3, sY + 9.8, { fontSize: 8, color: BLUE_HEADER })
+  }
+
+  doc.setFont('courier', 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(...BLUE_HEADER)
+  const grandFormatted = `PKR ${grand.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  doc.text(grandFormatted, summaryBoxX + summaryBoxWidth - 3, sY + 7.5, { align: 'right' })
+
+  // 5. Signature & Footer Section
+  const sigY = pageHeight - 38
+  const sigWidth = 72
+
+  doc.setDrawColor(15, 23, 42)
+  doc.setLineWidth(0.3)
+
+  // Received By (Customer) / وصول کنندہ (گاہک)
+  doc.line(MARGIN, sigY, MARGIN + sigWidth, sigY)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.setTextColor(9, 9, 11)
+  doc.text('Received By (Customer)', MARGIN + sigWidth / 2, sigY + 4, { align: 'center' })
+  if (hasUrdu) {
+    drawUrdu(doc, 'وصول کنندہ (گاہک)', MARGIN + sigWidth / 2, sigY + 8.5, { align: 'center', fontSize: 8, color: [9, 9, 11] })
+  }
 
   // Authorised Signatory
-  const rightSigX = pageWidth - MARGIN - sigLineWidth
-  doc.line(rightSigX, sigY, rightSigX + sigLineWidth, sigY)
-  doc.text('Authorised Signatory', rightSigX + sigLineWidth / 2, sigY + 4, { align: 'center' })
-  drawUrdu(doc, UR.authorisedSignatory, rightSigX + sigLineWidth / 2, sigY + 7.5, { align: 'center', fontSize: 7.5, color: C.slate })
+  doc.line(pageWidth - MARGIN - sigWidth, sigY, pageWidth - MARGIN, sigY)
+  doc.text('Authorised Signatory', pageWidth - MARGIN - sigWidth / 2, sigY + 4, { align: 'center' })
+  if (hasUrdu) {
+    drawUrdu(doc, 'اختیار یافتہ دستخط کنندہ', pageWidth - MARGIN - sigWidth / 2, sigY + 8.5, { align: 'center', fontSize: 8, color: [9, 9, 11] })
+  }
 
-  // Company Footer Banner at the bottom
-  const footerY = pageHeight - 12
-  doc.setDrawColor(...bannerBlue)
-  doc.setLineWidth(0.4)
-  doc.line(MARGIN, footerY - 3, pageWidth - MARGIN, footerY - 3)
+  // Footer: Centered company contact details
+  const totalPages = doc.getNumberOfPages()
+  for (let pNum = 1; pNum <= totalPages; pNum++) {
+    doc.setPage(pNum)
 
-  doc.setFont('times', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(...bannerBlue)
-  doc.text(legalName.toUpperCase(), pageWidth / 2, footerY + 0.5, { align: 'center' })
+    doc.setDrawColor(...BORDER_DARK)
+    doc.setLineWidth(0.2)
+    doc.line(MARGIN, pageHeight - 11, pageWidth - MARGIN, pageHeight - 11)
 
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(7.5)
-  doc.setTextColor(...C.ink)
-  const contactLine = `${contactEmail}   |   ${contactWebsite}   |   ${contactPhone}`
-  doc.text(contactLine, pageWidth / 2, footerY + 4.2, { align: 'center' })
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(24, 24, 27)
+    doc.text(COMPANY_LEGAL_NAME.toUpperCase(), MARGIN, pageHeight - 7)
 
-  if (socialParts.length > 0) {
-    doc.text(socialParts.join('   |   '), pageWidth / 2, footerY + 7.8, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(82, 82, 82)
+    const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
+    doc.text(contactLine, pageWidth / 2, pageHeight - 7, { align: 'center' })
+
+    doc.setFont('courier', 'normal')
+    doc.setFontSize(7.5)
+    doc.text(`Page ${pNum} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 7, { align: 'right' })
   }
 
   outputReport(doc, `quotation_${quotation.quotation_number}.pdf`)

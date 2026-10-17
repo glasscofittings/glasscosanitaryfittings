@@ -7,9 +7,10 @@ import {
   fetchWorkerLoans,
   type Worker,
   type AttendanceMap,
+  type TimeLogMap,
   type WorkerLoan,
 } from "@/lib/supabase/labour";
-import { calculateEarnedSalary } from "@/lib/salary";
+import { calculateEarnedSalary, formatMinutes } from "@/lib/salary";
 import { exportWorkerPayslipPDF } from "@/lib/pdf-exporter";
 import {
   createPaymentVoucher,
@@ -23,6 +24,8 @@ import { ACCOUNT_CODES } from "@/lib/ledger/account-codes";
 interface Props {
   worker: Worker;
   attendance: AttendanceMap;
+  /** Arrival / departure times — drives overtime pay. */
+  timeLogs?: TimeLogMap;
   year: number;
   month: number;
   /** Bump to re-fetch loans (e.g. after issue/repay in LoanTrackingPanel). */
@@ -31,7 +34,7 @@ interface Props {
   onPaid?: () => void;
 }
 
-export default function SalaryCard({ worker, attendance, year, month, refreshKey = 0, onPaid }: Props) {
+export default function SalaryCard({ worker, attendance, timeLogs = {}, year, month, refreshKey = 0, onPaid }: Props) {
   // null = still loading; the parent remounts this card via `key={worker.id}` so
   // a worker switch resets to null without a synchronous setState in the effect.
   const [loans, setLoans] = useState<WorkerLoan[] | null>(null);
@@ -41,7 +44,7 @@ export default function SalaryCard({ worker, attendance, year, month, refreshKey
   const [payCheckLoading, setPayCheckLoading] = useState(true);
 
   const periodRef = `SALARY-${year}-${String(month).padStart(2, "0")}`;
-  const salary = calculateEarnedSalary(worker, attendance, year, month);
+  const salary = calculateEarnedSalary(worker, attendance, year, month, timeLogs);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +85,7 @@ export default function SalaryCard({ worker, attendance, year, month, refreshKey
     if (printing) return;
     setPrinting(true);
     try {
-      await exportWorkerPayslipPDF(worker, attendance, loanList, year, month);
+      await exportWorkerPayslipPDF(worker, attendance, loanList, year, month, timeLogs);
     } finally {
       setPrinting(false);
     }
@@ -96,7 +99,7 @@ export default function SalaryCard({ worker, attendance, year, month, refreshKey
             Salary — {monthLabel}
           </h2>
           <p className="text-caption text-muted mt-0.5">
-            Computed from attendance · loans are not deducted
+            Computed from attendance, overtime & undertime · loans are not deducted
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -171,8 +174,17 @@ export default function SalaryCard({ worker, attendance, year, month, refreshKey
             PKR {salary.earnedSalary.toLocaleString()}
           </p>
           <p className="text-[10px] text-muted mt-1">
-            {paidDays} paid day{paidDays === 1 ? "" : "s"} (P {salary.presentDays} + L{" "}
-            {salary.leaveDays}) × PKR {salary.dailyRate.toFixed(2)}/day
+            Basic: {paidDays} paid day{paidDays === 1 ? "" : "s"} (P {salary.presentDays} + L{" "}
+            {salary.leaveDays}) × PKR {salary.dailyRate.toFixed(2)}/day = PKR{" "}
+            {salary.basicSalary.toLocaleString()}
+          </p>
+          <p className="text-[10px] text-muted mt-0.5">
+            Overtime: {formatMinutes(salary.overtimeMinutes)} × PKR{" "}
+            {salary.overtimeRate.toLocaleString()}/hr = + PKR {salary.overtimePay.toLocaleString()}
+          </p>
+          <p className="text-[10px] text-muted mt-0.5">
+            Undertime: {formatMinutes(salary.undertimeMinutes)} × PKR {salary.hourlyRate.toFixed(2)}/hr = − PKR{" "}
+            {salary.undertimeDeduction.toLocaleString()}
           </p>
         </div>
         <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
