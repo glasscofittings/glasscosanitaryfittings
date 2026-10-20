@@ -7,7 +7,7 @@ import {
   deleteSanitaryProduct,
 } from "@/lib/supabase/catalog";
 import type { SanitaryProduct, SanitaryCategory } from "@/types";
-import { SANITARY_CATEGORIES } from "@/types";
+import { SANITARY_CATEGORY_OPTIONS } from "@/types";
 import { exportProductsToPDF, exportProductCostMarginReportPDF } from "@/lib/pdf-exporter";
 import SanitaryCatalogTable from "@/components/modules/catalog/SanitaryCatalogTable";
 import EditProductModal from "@/components/modules/catalog/EditProductModal";
@@ -348,7 +348,7 @@ export default function CatalogPage() {
         >
           All ({products.length})
         </button>
-        {(Object.keys(SANITARY_CATEGORIES) as SanitaryCategory[]).map((cat) => (
+        {SANITARY_CATEGORY_OPTIONS.map((cat) => (
           <button
             key={cat}
             onClick={() => setCategoryFilter(cat)}

@@ -51,6 +51,14 @@ export interface SalesInvoice {
   further_tax_amount_pkr: number;
   total_invoice_value_pkr: number;
   is_posted: boolean;
+  /**
+   * True once this invoice's units have actually been taken out of inventory.
+   * Set only by `approve_dispatch` under the approval workflow; invoices that
+   * predate the workflow are backfilled to true by migration
+   * 20261107010000 (their stock moved at creation). Edit/delete use it to
+   * decide whether stock adjustments are owed.
+   */
+  stock_deducted?: boolean;
   created_at: string;
   /** Invoice-level discount percentage applied to the gross line total (e.g. 5 = 5%). */
   discount_percent?: number;
@@ -498,10 +506,10 @@ export async function createInvoice(invoice: {
     if (items.length > 0) {
       const saved = await createInvoiceItems(created.id, items);
       if (saved.length !== items.length) {
-        // Lines ARE the invoice. If they failed to save we must not deduct
-        // stock, and the header has to go too — otherwise a retry creates a
-        // second invoice and the quotation conversion probe could adopt a
-        // line-less, stock-deducted artifact.
+        // Lines ARE the invoice. If they failed to save nothing may be
+        // recorded, and the header has to go too — otherwise a retry creates
+        // a second invoice and the quotation conversion probe could adopt a
+        // line-less artifact.
         console.error(
           `[createInvoice] Only ${saved.length}/${items.length} line(s) saved for ${created.invoice_number} — rolling back the invoice header.`,
         );
@@ -525,14 +533,12 @@ export async function createInvoice(invoice: {
             "Invoice lines could not be saved, so nothing was recorded. Please retry.",
         };
       }
-      const stockErrors = await applyStockMovement(items, "deduct");
-      return {
-        invoice: { ...created, items: saved },
-        stockWarning:
-          stockErrors.length > 0
-            ? `Invoice saved, but inventory could not be reduced for: ${stockErrors.join("; ")}`
-            : undefined,
-      };
+      // Stock is deliberately NOT moved here: under the dispatch approval
+      // workflow inventory only changes when approve_dispatch runs (the
+      // "Approve" action in Dispatch History). Invoices that predate the
+      // workflow carry stock_deducted=true (migration 20261107010000), so
+      // their edit/delete paths still reverse stock correctly.
+      return { invoice: { ...created, items: saved } };
     }
     return { invoice: created };
   } catch (err) {
@@ -609,6 +615,23 @@ export async function updateInvoiceItems(
       );
     }
 
+    // Whether this invoice's units were ever taken out of stock decides if an
+    // edit owes a stock delta: pending-approval invoices never moved stock,
+    // legacy/approved invoices did (sales_invoices.stock_deducted).
+    let stockSettled = false;
+    try {
+      const flagRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/sales_invoices?id=eq.${invoiceId}&select=stock_deducted`,
+        { headers: headers() },
+      );
+      if (flagRes.ok) {
+        const rows = (await flagRes.json()) as Array<{ stock_deducted?: boolean | null }>;
+        stockSettled = Array.isArray(rows) && rows[0]?.stock_deducted === true;
+      }
+    } catch (err) {
+      console.warn("Could not read stock_deducted for stock delta:", err);
+    }
+
     // Delete existing items
     await fetch(
       `${SUPABASE_URL}/rest/v1/sales_invoice_items?invoice_id=eq.${invoiceId}`,
@@ -622,7 +645,9 @@ export async function updateInvoiceItems(
       await createInvoiceItems(invoiceId, items);
     }
 
-    await applyInvoiceStockDelta(previous, items);
+    if (stockSettled) {
+      await applyInvoiceStockDelta(previous, items);
+    }
     return true;
   } catch (err) {
     console.error(
@@ -683,11 +708,84 @@ async function applyInvoiceStockDelta(
 }
 
 /**
+ * Removes the posted sales ledger entry (`Sales invoice <number> posted`,
+ * journal_lines cascade with it). Shared by invoice delete and dispatch
+ * delete/reversal so every path matches the same narration probe.
+ * Returns true when an entry existed and is now gone.
+ */
+async function removeSalesInvoiceJournal(
+  invoiceNumber: string,
+): Promise<boolean> {
+  if (!SUPABASE_URL) return false;
+  try {
+    const pattern = encodeURIComponent(`*${invoiceNumber}*`);
+    const jeRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/journal_entries?status=eq.POSTED&narration=ilike.${pattern}&select=id`,
+      { headers: headers() },
+    );
+    if (!jeRes.ok) {
+      console.warn(
+        "Supabase Error [invoice journal lookup]:",
+        jeRes.status,
+        (await jeRes.text()).slice(0, 300),
+      );
+      return false;
+    }
+    const rows = (await jeRes.json()) as Array<{ id?: string }>;
+    const ids = (Array.isArray(rows) ? rows : [])
+      .map((r) => r.id)
+      .filter(Boolean) as string[];
+    if (ids.length === 0) return false;
+    const delRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/journal_entries?id=in.(${ids.join(",")})`,
+      { method: "DELETE", headers: headers() },
+    );
+    if (!delRes.ok) {
+      console.warn(
+        "Supabase Error [invoice journal cleanup]:",
+        delRes.status,
+        (await delRes.text()).slice(0, 300),
+      );
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("Could not remove invoice journal entry:", err);
+    return false;
+  }
+}
+
+/**
+ * Reads sales_invoices.stock_deducted (migration 20261107010000). Missing
+ * column or failed reads report false, so nothing is ever reversed twice.
+ */
+async function readStockSettled(
+  invoiceId: string,
+): Promise<boolean> {
+  if (!SUPABASE_URL) return false;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/sales_invoices?id=eq.${invoiceId}&select=stock_deducted`,
+      { headers: headers() },
+    );
+    if (!res.ok) return false;
+    const rows = (await res.json()) as Array<{ stock_deducted?: boolean | null }>;
+    return Array.isArray(rows) && rows[0]?.stock_deducted === true;
+  } catch (err) {
+    console.warn("Could not read stock_deducted:", err);
+    return false;
+  }
+}
+
+/**
  * Deletes a sales invoice from the database.
  * `sales_invoice_items` and `dispatch_records` rows disappear automatically
  * (ON DELETE CASCADE). When the invoice was already posted, the ledger entry
  * created for it (`Sales invoice <number> posted`) is removed as well, so the
- * books stay balanced after the delete.
+ * books stay balanced after the delete. Stock is returned only when the
+ * invoice's units were actually taken out of stock (`stock_deducted`) —
+ * pending-approval invoices never moved stock, so deleting them must not
+ * inflate inventory.
  */
 export async function deleteInvoice(invoice: {
   id: string;
@@ -726,6 +824,9 @@ export async function deleteInvoice(invoice: {
         console.warn("Could not read invoice items before delete:", err);
       }
     }
+
+    // Only invoices whose stock was really deducted may return units.
+    const stockSettled = await readStockSettled(invoice.id);
 
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/sales_invoices?id=eq.${invoice.id}`,
@@ -767,47 +868,16 @@ export async function deleteInvoice(invoice: {
     }
 
     // Posted invoice → remove its ledger entry too (journal_lines cascade with it).
-    let ledgerRemoved = false;
-    if (invoice.is_posted) {
-      const pattern = encodeURIComponent(`*${invoice.invoice_number}*`);
-      const jeRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/journal_entries?status=eq.POSTED&narration=ilike.${pattern}&select=id`,
-        { headers: headers() },
-      );
-      if (jeRes.ok) {
-        const rows = (await jeRes.json()) as Array<{ id?: string }>;
-        const ids = (Array.isArray(rows) ? rows : [])
-          .map((r) => r.id)
-          .filter(Boolean) as string[];
-        if (ids.length > 0) {
-          const delRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/journal_entries?id=in.(${ids.join(",")})`,
-            {
-              method: "DELETE",
-              headers: headers(),
-            },
-          );
-          ledgerRemoved = delRes.ok;
-          if (!delRes.ok) {
-            console.warn(
-              "Supabase Error [invoice journal cleanup]:",
-              delRes.status,
-              (await delRes.text()).slice(0, 300),
-            );
-          }
-        }
-      } else {
-        console.warn(
-          "Supabase Error [invoice journal lookup]:",
-          jeRes.status,
-          (await jeRes.text()).slice(0, 300),
-        );
-      }
-    }
+    const ledgerRemoved = invoice.is_posted
+      ? await removeSalesInvoiceJournal(invoice.invoice_number)
+      : false;
 
-    // Return the invoice's units to inventory.
+    // Return the invoice's units to inventory — but only when they were
+    // actually deducted (pre-approval deletes must not touch stock).
     const stockErrors =
-      items.length > 0 ? await applyStockMovement(items, "restore") : [];
+      stockSettled && items.length > 0
+        ? await applyStockMovement(items, "restore")
+        : [];
     if (stockErrors.length > 0) {
       console.warn(
         "Stock not returned on invoice delete:",
@@ -818,7 +888,7 @@ export async function deleteInvoice(invoice: {
     return {
       success: true,
       ledgerRemoved,
-      stockRestored: items.length > 0 && stockErrors.length === 0,
+      stockRestored: stockSettled && items.length > 0 && stockErrors.length === 0,
     };
   } catch (err) {
     console.error(
@@ -1694,7 +1764,13 @@ export function generateInvoiceHTML(
       .summary tr.grand td{font-size:10pt;font-weight:700;padding-top:5px;padding-bottom:5px;color:#09090b;}
       .summary.grand-box{border:1px solid #212121ff;background:#e5e7eb;page-break-inside:avoid;}
       .summary.grand-box td{background:#EBF3FA;}
-      .signatures{display:flex;justify-content:space-between;gap:30px;margin-top:auto;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
+      /* Page foot = signatures + footer as one atomic block: bottom-anchored via
+         the flex auto-margin (dynamic spacing - it collapses so the block snaps
+         right below the totals when the page can't pin it), never orphaned onto
+         a fresh page while any room is left (break-before: avoid), never split
+         mid-block (break-inside: avoid). */
+      .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
+      .signatures{display:flex;justify-content:space-between;gap:30px;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
       .sig{width:46%;text-align:center;font-size:10.5px;font-weight:700;color:#09090b;}
       .sig .ur{text-align:center;font-weight:600;}
       /*------------------------------------------------------------- Footer -------------------------------------------------*/
@@ -1705,7 +1781,10 @@ export function generateInvoiceHTML(
       @page{size:A4 portrait;margin:0;}
       @media print{
         html,body{background:#fff;}
-        .sheet{margin:0;box-shadow:none;}
+        /* Reserve the REAL page area (100vh in print = paper minus @page
+           margins), not a hard 297mm: on Letter or with dialog/printer margins
+           a rigid 297mm sheet overflows the page and orphans the footer. */
+        .sheet{margin:0;box-shadow:none;min-height:100vh;}
         *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
         a[href]:after{content:none!important;}
       }
@@ -1762,15 +1841,17 @@ export function generateInvoiceHTML(
         </div>
       </div>
 
-      <div class="signatures">
-        <div class="sig">${urUnder("Received By (Customer)", UR.receivedByCustomer)}</div>
-        <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
-      </div>
+      <div class="page-foot">
+        <div class="signatures">
+          <div class="sig">${urUnder("Received By (Customer)", UR.receivedByCustomer)}</div>
+          <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
+        </div>
 
-      <div class="footer">
-        <div class="legal">${esc(footerBrand)}</div>
-        <div class="contact-line">${esc(contactEmail)} | ${esc(contactWebsite)} | ${esc(contactPhone)}</div>
-        ${socialParts.length > 0 ? `<div class="contact-line social-line">${socialParts.join(" | ")}</div>` : ""}
+        <div class="footer">
+          <div class="legal">${esc(footerBrand)}</div>
+          <div class="contact-line">${esc(contactEmail)} | ${esc(contactWebsite)} | ${esc(contactPhone)}</div>
+          ${socialParts.length > 0 ? `<div class="contact-line social-line">${socialParts.join(" | ")}</div>` : ""}
+        </div>
       </div>
     </div>
     </body></html>`;
@@ -1862,6 +1943,9 @@ export interface DispatchLineItem {
   discount_pkr?: number;
 }
 
+/** Dispatch workflow states: printed → approved (stock + ledger moved) → dispatched. */
+export type DispatchStatus = "pending_approval" | "approved" | "dispatched";
+
 export interface DispatchRecord {
   id: string;
   invoice_id: string;
@@ -1879,6 +1963,18 @@ export interface DispatchRecord {
   device_node: string;
   posted_at: string;
   created_at: string;
+  /**
+   * Optional in the type because a database missing migration
+   * 20261107010000 does not return the column yet — UI treats an absent
+   * status as 'dispatched' (all pre-workflow records are completed).
+   */
+  status?: DispatchStatus;
+  /** Date the goods physically leave (editable in the dispatch edit modal). */
+  dispatch_date?: string;
+  /** Free-text transport details (vehicle / transporter / remarks). */
+  transport_details?: string;
+  /** Operator remarks captured on the dispatch. */
+  operator_notes?: string;
   /** Joined from parties via customer_id — fallback when the denormalized customer_name is empty. */
   parties?: Party;
 }
@@ -1914,6 +2010,15 @@ export async function createDispatchRecord(record: {
   line_items: DispatchLineItem[];
   operator_name: string;
   device_node: string;
+  /**
+   * Workflow state written when the record is created. Printing defaults to
+   * 'pending_approval' (DB default); callers whose stock/ledger effects have
+   * already run pass 'dispatched' explicitly.
+   */
+  status?: DispatchStatus;
+  dispatch_date?: string;
+  transport_details?: string;
+  operator_notes?: string;
 }): Promise<DispatchRecord | null> {
   if (!SUPABASE_URL) return null;
   // Never persist an empty customer_name: callers may not have the party loaded,
@@ -1921,24 +2026,147 @@ export async function createDispatchRecord(record: {
   const customerName =
     record.customer_name?.trim() ||
     (await fetchPartyNameById(record.customer_id));
-  try {
+
+  const base: Record<string, unknown> = {
+    invoice_id: record.invoice_id,
+    invoice_number: record.invoice_number,
+    customer_id: record.customer_id,
+    customer_name: customerName,
+    taxable_value_pkr: record.taxable_value_pkr,
+    sales_tax_rate: record.sales_tax_rate,
+    sales_tax_amount_pkr: record.sales_tax_amount_pkr,
+    further_tax_rate: record.further_tax_rate,
+    further_tax_amount_pkr: record.further_tax_amount_pkr,
+    total_invoice_value_pkr: record.total_invoice_value_pkr,
+    line_items: record.line_items,
+    operator_name: record.operator_name,
+    device_node: record.device_node,
+  };
+  // Workflow columns only exist after migration 20261107010000 — include them
+  // when provided, and drop them on a column error so printing still works
+  // against a not-yet-migrated database.
+  const workflow: Record<string, unknown> = {};
+  if (record.status !== undefined) workflow.status = record.status;
+  if (record.dispatch_date !== undefined)
+    workflow.dispatch_date = record.dispatch_date;
+  if (record.transport_details !== undefined)
+    workflow.transport_details = record.transport_details;
+  if (record.operator_notes !== undefined)
+    workflow.operator_notes = record.operator_notes;
+
+  const insert = async (
+    payload: Record<string, unknown>,
+  ): Promise<{ ok: true; row: DispatchRecord | null } | { ok: false; status: number; message: string }> => {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/dispatch_records`, {
       method: "POST",
       headers: { ...headers(), Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text();
+    let body: Record<string, unknown> = {};
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* non-JSON response */
+    }
+    if (!res.ok) {
+      const { message } = body as { message?: string };
+      const fullMessage = message ?? text.slice(0, 300);
+      console.error("Supabase Error [dispatch_records insert]:", {
+        status: res.status,
+        message: fullMessage,
+        body,
+      });
+      return { ok: false, status: res.status, message: fullMessage };
+    }
+    const data = Array.isArray(body) ? body : [body];
+    const row = (data[0] as DispatchRecord) ?? null;
+    if (row) row.line_items = parseLineItems(row.line_items);
+    return { ok: true, row };
+  };
+
+  try {
+    const first = await insert({ ...base, ...workflow });
+    if (first.ok) return first.row;
+
+    // Missing workflow columns (database predates 20261107010000): retry with
+    // the legacy column set so the print flow never loses its dispatch record.
+    const missingColumn =
+      first.status === 400 &&
+      /does not exist|schema cache/i.test(first.message) &&
+      Object.keys(workflow).some((key) => first.message.includes(key));
+    if (missingColumn && Object.keys(workflow).length > 0) {
+      console.warn(
+        "[dispatch_records] Workflow columns missing — run migration 20261107010000_dispatch_approval_workflow.sql. Retrying without them.",
+      );
+      const legacy = await insert(base);
+      return legacy.ok ? legacy.row : null;
+    }
+    return null;
+  } catch (err) {
+    console.error(
+      "Supabase Error [dispatch_records insert]:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Returns the dispatch record already stored for an invoice, if any. Used by
+ * the print flow so re-prints never create a second (duplicate) record for
+ * the same invoice.
+ */
+export async function findDispatchRecordByInvoice(
+  invoiceId: string,
+): Promise<DispatchRecord | null> {
+  if (!SUPABASE_URL) return null;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/dispatch_records?invoice_id=eq.${encodeURIComponent(invoiceId)}&select=*,parties:customer_id(id,name)&order=created_at.asc&limit=1`,
+      { headers: headers() },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const row = Array.isArray(data) ? (data[0] as DispatchRecord) : undefined;
+    if (!row) return null;
+    row.line_items = parseLineItems(row.line_items);
+    return row;
+  } catch (err) {
+    console.warn("Could not look up dispatch record for invoice:", err);
+    return null;
+  }
+}
+
+/**
+ * Approves a pending dispatch in a single RPC (`approve_dispatch`):
+ * flips status → 'approved', deducts stock, and posts the customer's ledger
+ * debit (journal entry) — all in one database transaction. Each effect is
+ * guarded by sales_invoices state, so retrying is safe and nothing runs
+ * before approval.
+ */
+export async function approveDispatch(
+  dispatchId: string,
+  operatorName: string,
+  deviceNode: string,
+): Promise<{
+  success: boolean;
+  status?: DispatchStatus;
+  alreadyApproved?: boolean;
+  invoiceNumber?: string;
+  totalPayable?: number;
+  error?: string;
+}> {
+  if (!SUPABASE_URL)
+    return { success: false, error: "Server URL is not configured" };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/approve_dispatch`, {
+      method: "POST",
+      headers: headers(),
       body: JSON.stringify({
-        invoice_id: record.invoice_id,
-        invoice_number: record.invoice_number,
-        customer_id: record.customer_id,
-        customer_name: customerName,
-        taxable_value_pkr: record.taxable_value_pkr,
-        sales_tax_rate: record.sales_tax_rate,
-        sales_tax_amount_pkr: record.sales_tax_amount_pkr,
-        further_tax_rate: record.further_tax_rate,
-        further_tax_amount_pkr: record.further_tax_amount_pkr,
-        total_invoice_value_pkr: record.total_invoice_value_pkr,
-        line_items: record.line_items,
-        operator_name: record.operator_name,
-        device_node: record.device_node,
+        p_dispatch_id: dispatchId,
+        p_operator_name: operatorName,
+        p_device_node: deviceNode,
       }),
     });
     const text = await res.text();
@@ -1949,29 +2177,253 @@ export async function createDispatchRecord(record: {
       /* non-JSON response */
     }
     if (!res.ok) {
-      const { message, code, details, hint } = body as {
-        message?: string;
-        code?: string;
-        details?: string;
-        hint?: string;
-      };
-      console.error("Supabase Error [dispatch_records insert]:", {
+      const { message, hint } = body as { message?: string; hint?: string };
+      console.error("Supabase Error [approve_dispatch RPC]:", {
         status: res.status,
         message: message ?? text.slice(0, 300),
-        code: code ?? null,
-        details: details ?? null,
         hint: hint ?? null,
+      });
+      if (/schema cache|not find function/i.test(message ?? "")) {
+        return {
+          success: false,
+          error:
+            "The approve_dispatch function is missing — run migration 20261107010000_dispatch_approval_workflow.sql in the database SQL editor, then retry.",
+        };
+      }
+      return { success: false, error: message ?? `Approval failed (HTTP ${res.status})` };
+    }
+    const data = body as {
+      status?: string;
+      already_approved?: boolean;
+      invoice_number?: string;
+      total_payable?: number;
+    };
+    return {
+      success: true,
+      status: (data.status as DispatchStatus) ?? "approved",
+      alreadyApproved: data.already_approved === true,
+      invoiceNumber: data.invoice_number,
+      totalPayable: typeof data.total_payable === "number" ? data.total_payable : undefined,
+    };
+  } catch (err) {
+    console.error(
+      "Supabase Error [approve_dispatch RPC]:",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Network error",
+    };
+  }
+}
+
+export type DispatchRecordPatch = Partial<
+  Pick<
+    DispatchRecord,
+    | "status"
+    | "dispatch_date"
+    | "transport_details"
+    | "operator_notes"
+    | "line_items"
+    | "taxable_value_pkr"
+    | "sales_tax_rate"
+    | "sales_tax_amount_pkr"
+    | "further_tax_rate"
+    | "further_tax_amount_pkr"
+    | "total_invoice_value_pkr"
+    | "operator_name"
+  >
+>;
+
+/**
+ * Updates dispatch parameters (items and their recalculated totals, date,
+ * transport details, notes, or the approved → dispatched transition).
+ * Returns the fresh row, or null on failure.
+ */
+export async function updateDispatchRecord(
+  dispatchId: string,
+  patch: DispatchRecordPatch,
+): Promise<DispatchRecord | null> {
+  if (!SUPABASE_URL) return null;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/dispatch_records?id=eq.${encodeURIComponent(dispatchId)}`,
+      {
+        method: "PATCH",
+        headers: { ...headers(), Prefer: "return=representation" },
+        body: JSON.stringify(patch),
+      },
+    );
+    const text = await res.text();
+    let body: unknown = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* non-JSON response */
+    }
+    if (!res.ok) {
+      const err = (body ?? {}) as { message?: string };
+      console.error("Supabase Error [dispatch_records update]:", {
+        status: res.status,
+        message: err.message ?? text.slice(0, 300),
       });
       return null;
     }
-    const data = Array.isArray(body) ? body : [body];
-    return (data[0] as DispatchRecord) ?? null;
+    const rows = Array.isArray(body) ? body : [];
+    const row = (rows[0] as DispatchRecord) ?? null;
+    if (row) row.line_items = parseLineItems(row.line_items);
+    return row;
   } catch (err) {
     console.error(
-      "Supabase Error [dispatch_records insert]:",
+      "Supabase Error [dispatch_records update]:",
       err instanceof Error ? err.message : err,
     );
     return null;
+  }
+}
+
+/**
+ * Deletes a dispatch entry from Dispatch History.
+ *
+ * Effects are gated per component so every status is safe:
+ *  - pending_approval → only the dispatch row is removed (no stock or ledger
+ *    adjustments were ever made for it);
+ *  - approved/dispatched → the posted journal entry is removed and stock is
+ *    returned, but only where those effects actually happened
+ *    (sales_invoices.is_posted / stock_deducted), and the invoice is flipped
+ *    back to draft so books and inventory stay consistent.
+ */
+export async function deleteDispatchRecord(record: DispatchRecord): Promise<{
+  success: boolean;
+  error?: string;
+  stockRestored: boolean;
+  ledgerReversed: boolean;
+}> {
+  if (!SUPABASE_URL)
+    return {
+      success: false,
+      error: "Server URL is not configured",
+      stockRestored: false,
+      ledgerReversed: false,
+    };
+  try {
+    // ── 1. Read invoice state before anything disappears ────────────────────
+    let isPosted = false;
+    let stockSettled = false;
+    try {
+      const headRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/sales_invoices?id=eq.${record.invoice_id}&select=is_posted,stock_deducted`,
+        { headers: headers() },
+      );
+      if (headRes.ok) {
+        const rows = (await headRes.json()) as Array<{
+          is_posted?: boolean;
+          stock_deducted?: boolean | null;
+        }>;
+        const head = Array.isArray(rows) ? rows[0] : undefined;
+        isPosted = head?.is_posted === true;
+        stockSettled = head?.stock_deducted === true;
+      }
+    } catch (err) {
+      console.warn("Could not read invoice state before dispatch delete:", err);
+    }
+
+    // ── 2. Remove the dispatch row (the primary operation) ──────────────────
+    // If any later reversal step fails, the invoice still carries is_posted /
+    // stock_deducted, so the regular invoice delete remains a complete,
+    // idempotent way to finish the reversal.
+    const delRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/dispatch_records?id=eq.${encodeURIComponent(record.id)}`,
+      { method: "DELETE", headers: headers() },
+    );
+    if (!delRes.ok) {
+      const text = await delRes.text();
+      console.error("Supabase Error [dispatch_records delete]:", {
+        status: delRes.status,
+        message: text.slice(0, 300),
+      });
+      return {
+        success: false,
+        error: `Delete failed (HTTP ${delRes.status})`,
+        stockRestored: false,
+        ledgerReversed: false,
+      };
+    }
+
+    // ── 3. Reverse inventory (only when units were deducted) ────────────────
+    let stockRestored = false;
+    if (stockSettled) {
+      let lines: Array<
+        Pick<DispatchLineItem, "product_id" | "product_name" | "quantity">
+      > = record.line_items.length > 0 ? record.line_items : [];
+      if (lines.length === 0) {
+        // Older snapshots may keep products only on the invoice side.
+        try {
+          const itemRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/sales_invoice_items?invoice_id=eq.${record.invoice_id}&select=product_id,product_name,quantity`,
+            { headers: headers() },
+          );
+          if (itemRes.ok) {
+            const rows = await itemRes.json();
+            if (Array.isArray(rows)) lines = rows;
+          }
+        } catch {
+          /* no fallback available */
+        }
+      }
+      if (lines.length > 0) {
+        const errors = await applyStockMovement(lines, "restore");
+        stockRestored = errors.length === 0;
+        if (errors.length > 0) {
+          console.warn(
+            "Stock not returned on dispatch delete:",
+            errors.join("; "),
+          );
+        }
+      } else {
+        stockRestored = true; // nothing to return
+      }
+    }
+
+    // ── 4. Reverse the ledger (only when a posted entry exists) ─────────────
+    const ledgerReversed = isPosted
+      ? await removeSalesInvoiceJournal(record.invoice_number)
+      : false;
+
+    // ── 5. Bring the invoice back to draft in line with what was reversed ───
+    const patch: Record<string, unknown> = {};
+    if (stockSettled && stockRestored) patch.stock_deducted = false;
+    if (isPosted && ledgerReversed) patch.is_posted = false;
+    if (Object.keys(patch).length > 0) {
+      const patchRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/sales_invoices?id=eq.${record.invoice_id}`,
+        {
+          method: "PATCH",
+          headers: { ...headers(), Prefer: "return=minimal" },
+          body: JSON.stringify(patch),
+        },
+      );
+      if (!patchRes.ok) {
+        console.warn(
+          "Supabase Error [invoice draft reset after dispatch delete]:",
+          patchRes.status,
+          (await patchRes.text()).slice(0, 300),
+        );
+      }
+    }
+
+    return { success: true, stockRestored, ledgerReversed };
+  } catch (err) {
+    console.error(
+      "Supabase Error [deleteDispatchRecord]:",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Network error",
+      stockRestored: false,
+      ledgerReversed: false,
+    };
   }
 }
 

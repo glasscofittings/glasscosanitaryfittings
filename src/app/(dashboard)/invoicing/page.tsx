@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { fetchCustomers, fetchInvoices, fetchDispatchRecords, attachDispatchLineItems, dispatchItemsToInvoiceItems, deleteInvoice, type Party, type SalesInvoice, type DispatchLineItem, type DispatchRecord } from "@/lib/supabase/invoicing";
+import { fetchCustomers, fetchInvoices, fetchDispatchRecords, attachDispatchLineItems, dispatchItemsToInvoiceItems, deleteInvoice, approveDispatch, deleteDispatchRecord, type Party, type SalesInvoice, type DispatchLineItem, type DispatchRecord } from "@/lib/supabase/invoicing";
 import { fetchInvoicesWithDispatch, generateSlipInvoiceHTML, triggerSlipPrint, getInvoiceTaxLines, type DispatchInvoice } from "@/lib/supabase/catalog";
 import { fetchPendingPurchaseInvoices } from "@/lib/supabase/purchase-invoices";
 import InvoiceGenerator from "@/components/modules/invoicing/InvoiceGenerator";
@@ -12,6 +12,9 @@ import PostPrintDrawer from "@/components/modules/invoicing/PostPrintDrawer";
 import InvoicePreviewDrawer from "@/components/modules/invoicing/InvoicePreviewDrawer";
 import OutwardGatePass from "@/components/modules/invoicing/OutwardGatePass";
 import BackupModal from "@/components/modules/invoicing/BackupModal";
+import DispatchHistoryTable from "@/components/modules/dispatch/DispatchHistoryTable";
+import EditDispatchModal from "@/components/modules/dispatch/EditDispatchModal";
+import { useOperatorStore } from "@/lib/store/useOperatorStore";
 import EditInvoiceModal from "@/components/modules/invoicing/EditInvoiceModal";
 import { runAutoBackupIfNeeded } from "@/lib/supabase/backup";
 import { formatBytes } from "@/lib/backup-exporter";
@@ -41,6 +44,10 @@ export default function InvoicingPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SalesInvoice | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [editDispatch, setEditDispatch] = useState<DispatchRecord | null>(null);
+  const [deleteDispatchTarget, setDeleteDispatchTarget] = useState<DispatchRecord | null>(null);
+  const [deletingDispatch, setDeletingDispatch] = useState(false);
 
   const query = searchQuery.trim().toLowerCase();
 
@@ -101,6 +108,9 @@ export default function InvoicingPage() {
   useEscapeToClose(!!deleteTarget, () => {
     if (!deleting) setDeleteTarget(null);
   });
+  useEscapeToClose(!!deleteDispatchTarget, () => {
+    if (!deletingDispatch) setDeleteDispatchTarget(null);
+  });
   useEscapeToClose(!!slipInvoice, () => setSlipInvoice(null));
 
   const draftCount = invoices.filter((i) => !i.is_posted).length;
@@ -151,6 +161,64 @@ export default function InvoicingPage() {
       res.stockRestored ? "stock returned to inventory" : null,
     ].filter(Boolean).join(", ");
     toast.success(notes ? `${target.invoice_number} deleted — ${notes}` : `${target.invoice_number} deleted`);
+  }
+
+  /**
+   * Approve: one RPC flips the dispatch to 'approved', deducts stock, and
+   * posts the customer's ledger debit in a single database transaction.
+   */
+  async function handleApproveDispatch(record: DispatchRecord) {
+    if (approvingId) return;
+    setApprovingId(record.id);
+    try {
+      let operatorName: string;
+      try {
+        operatorName = await useOperatorStore.getState().open("Approve Dispatch");
+      } catch {
+        return; // operator cancelled attribution — nothing may happen
+      }
+      const result = await approveDispatch(
+        record.id,
+        operatorName,
+        process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
+      );
+      if (!result.success) {
+        toast.error(`Could not approve ${record.invoice_number}: ${result.error ?? "unknown error"}`);
+        return;
+      }
+      toast.success(
+        result.alreadyApproved
+          ? `${record.invoice_number} was already approved.`
+          : `Dispatch approved — stock deducted and customer ledger debited for ${record.invoice_number}.`,
+      );
+      handleRefresh();
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  async function confirmDeleteDispatch() {
+    if (!deleteDispatchTarget || deletingDispatch) return;
+    const target = deleteDispatchTarget;
+    setDeletingDispatch(true);
+    const res = await deleteDispatchRecord(target);
+    setDeletingDispatch(false);
+    if (!res.success) {
+      toast.error(`Could not delete dispatch ${target.invoice_number}: ${res.error ?? "unknown error"}`);
+      return;
+    }
+    setDeleteDispatchTarget(null);
+    setDispatchRecords((prev) => prev.filter((r) => r.id !== target.id));
+    handleRefresh();
+    const notes = [
+      res.ledgerReversed ? "ledger entry removed" : null,
+      res.stockRestored ? "stock returned to inventory" : null,
+    ].filter(Boolean).join(", ");
+    toast.success(
+      notes
+        ? `Dispatch ${target.invoice_number} deleted — ${notes}`
+        : `Dispatch ${target.invoice_number} deleted (no stock or ledger adjustments were due)`,
+    );
   }
 
   function handlePosted(invoice: SalesInvoice) {
@@ -280,7 +348,13 @@ export default function InvoicingPage() {
           ) : (
             <InvoicesTable invoices={filteredInvoices} onPost={handlePost} onView={handleView} onEdit={handleEdit} onDelete={handleDelete} />
           )}
-          <DispatchHistoryTable records={dispatchRecords} />
+          <DispatchHistoryTable
+            records={dispatchRecords}
+            approvingId={approvingId}
+            onApprove={handleApproveDispatch}
+            onEdit={setEditDispatch}
+            onDelete={setDeleteDispatchTarget}
+          />
         </>
       )}
 
@@ -364,6 +438,81 @@ export default function InvoicingPage() {
         />
       )}
 
+      {editDispatch && (
+        <EditDispatchModal
+          record={editDispatch}
+          open
+          onClose={() => setEditDispatch(null)}
+          onSaved={(updated) => {
+            setDispatchRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+            setEditDispatch(null);
+            handleRefresh();
+          }}
+        />
+      )}
+
+      {deleteDispatchTarget && (
+        <>
+          <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm" onClick={() => { if (!deletingDispatch) setDeleteDispatchTarget(null); }} />
+          <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+            <div className="glass-card w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+              <div className="p-5 border-b border-border-subtle flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-h2 font-semibold text-status-alert">Delete dispatch?</h2>
+                  <p className="text-body text-secondary mt-1 font-mono">{deleteDispatchTarget.invoice_number}</p>
+                </div>
+                <button
+                  onClick={() => setDeleteDispatchTarget(null)}
+                  disabled={deletingDispatch}
+                  className="h-8 w-8 rounded-lg flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-muted transition-colors disabled:opacity-50"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="p-5 space-y-3 text-body text-secondary">
+                <p>
+                  Are you sure you want to delete dispatch{" "}
+                  <strong className="font-mono text-foreground">{deleteDispatchTarget.invoice_number}</strong>?
+                  It cannot be undone.
+                </p>
+                {(deleteDispatchTarget.status ?? "dispatched") !== "pending_approval" && (
+                  <p className="text-status-amber bg-status-amber/10 border border-status-amber/20 rounded-lg px-3 py-2">
+                    This dispatch is <strong>{deleteDispatchTarget.status ?? "dispatched"}</strong>. Its
+                    stock deduction and customer ledger entry will be reversed (when present) before
+                    the entry is removed, so inventory and books stay balanced.
+                  </p>
+                )}
+                {(deleteDispatchTarget.status ?? "dispatched") === "pending_approval" && (
+                  <p className="text-secondary">
+                    This dispatch is awaiting approval — no stock or ledger adjustments were made,
+                    so only the dispatch entry itself will be removed.
+                  </p>
+                )}
+              </div>
+              <div className="p-5 border-t border-border-subtle flex gap-3 justify-end">
+                <button
+                  onClick={() => setDeleteDispatchTarget(null)}
+                  disabled={deletingDispatch}
+                  className="h-9 px-4 rounded-lg bg-bg-muted text-secondary border border-border-default font-medium text-body hover:bg-bg-subtle transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteDispatch}
+                  disabled={deletingDispatch}
+                  className="h-9 px-4 rounded-lg bg-status-alert text-white font-medium text-body hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                >
+                  {deletingDispatch && <span className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+                  {deletingDispatch ? "Deleting..." : "Delete Dispatch"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {deleteTarget && (
         <>
           <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm" onClick={() => { if (!deleting) setDeleteTarget(null); }} />
@@ -434,64 +583,6 @@ function KPICard({ label, value, accent }: { label: string; value: string; accen
         <p className={`font-bold mt-1 font-mono ${accentMap[accent].text}`} style={{ fontSize: "1.1rem", lineHeight: "1.5rem" }}>{value}</p>
       </div>
       <span className={`h-2.5 w-2.5 rounded-full ${accentMap[accent].dot}`} />
-    </div>
-  );
-}
-
-function DispatchHistoryTable({ records }: { records: DispatchRecord[] }) {
-  if (records.length === 0) return null;
-
-  return (
-    <div className="glass-card overflow-hidden">
-      <div className="p-5 pb-0">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-h2 font-semibold">Dispatch History</h2>
-          <span className="badge">{records.length} dispatches</span>
-        </div>
-        <div className="glow-line mb-4" />
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-border-subtle">
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[140px]">Invoice #</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[160px]">Customer</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[200px]">Products</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[120px] text-right">Taxable</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[100px] text-right">Tax</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[120px] text-right">Total</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[140px]">Dispatched</th>
-              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[120px]">Operator</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((rec) => {
-              const items = Array.isArray(rec.line_items) ? rec.line_items : [];
-              const productNames = items.length > 0
-                ? items.map((i: DispatchLineItem) => `${i.product_name} (${i.quantity})`).join(", ")
-                : "—";
-              return (
-                <tr key={rec.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
-                  <td className="px-4 py-3">
-                    <span className="font-mono text-num-code text-secondary whitespace-nowrap">{rec.invoice_number}</span>
-                  </td>
-                  <td className="px-4 py-3 text-body text-foreground truncate">{rec.customer_name || rec.parties?.name || "—"}</td>
-                  <td className="px-4 py-3 text-caption text-secondary truncate max-w-[200px]" title={productNames}>{productNames}</td>
-                  <td className="px-4 py-3 text-right font-mono text-num-table text-secondary whitespace-nowrap">{formatPKR(rec.taxable_value_pkr)}</td>
-                  <td className="px-4 py-3 text-right font-mono text-num-table text-secondary whitespace-nowrap">
-                    {formatPKR(rec.sales_tax_amount_pkr + rec.further_tax_amount_pkr)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-num-kpi font-bold text-foreground whitespace-nowrap">{formatPKR(rec.total_invoice_value_pkr)}</td>
-                  <td className="px-4 py-3 text-caption text-secondary whitespace-nowrap">
-                    {new Date(rec.posted_at).toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </td>
-                  <td className="px-4 py-3 text-caption text-secondary">{rec.operator_name || "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

@@ -1,41 +1,83 @@
-export type SanitaryCategory =
-  | "Faucets & Mixers"
-  | "Ceramics & Porcelain"
-  | "Showers & Accessories"
-  | "Piping & Valves";
+/**
+ * Predefined sanitary-fitting options that power the searchable dropdowns in the
+ * Add / Edit Product modals. All three fields are stored as plain TEXT in the
+ * `sanitary_products` table, so the "+ Add Custom" option can still persist a
+ * value outside these lists without any schema change.
+ */
 
-export type SanitarySubcategory =
-  | "Single Lever"
-  | "Wall Mounted"
-  | "Sensor Taps"
-  | "Water Closets"
-  | "Wash Basins"
-  | "Pedestals"
-  | "Bidets"
-  | "Rain Showers"
-  | "Hand Showers"
-  | "Towel Rails"
-  | "Drain Grates"
-  | "Angle Valves"
-  | "Waste Pipes"
-  | "Fittings";
+export const SANITARY_CATEGORY_OPTIONS = [
+  "Bath Set Deluxe",
+  "Bath Set Economy",
+  "Bath Accessories",
+] as const;
 
-export type ProductFinish =
-  | "Chrome"
-  | "Matte Black"
-  | "Brushed Nickel"
-  | "Brass"
-  | "Ceramic"
-  | "White"
-  | "Other";
+export type SanitaryCategory = (typeof SANITARY_CATEGORY_OPTIONS)[number];
+
+export const SANITARY_SUBCATEGORY_OPTIONS = [
+  "Lever Set Complete",
+  "Head Set Complete",
+  "Wall Shower 2 Knob",
+  "Single Lever Basin Mixer",
+  "Double bib Cock",
+  "Tee Stop Cock",
+  "Brass Waste",
+  "Toilet Shower Complete",
+  "Toilet Shower Without Pipes",
+  "CP Chain",
+  "Masjid Mixer",
+  "Basin Mixer Cast Neck",
+  "Basin Mixer Medium Neck",
+  "Side Piller Cock Cast Neck",
+  "Side Piller Cock Medium Neck",
+  "Sink Mixer Cast Neck",
+  "Sink Mixer Medium Neck",
+  "Wall Sink Cock Cast Neck",
+  "Wall Sink Medium Neck",
+  "Bolan Sink Mixer Cast Neck & Long Neck",
+  "Rico Single Lever Sink Mixer",
+  "Lever Vanity Nova",
+  "Long Basin Mixer",
+  "Bib Cock",
+  "Bib Cock Brass Head",
+  "Bib Cock 605-606 C",
+  "Long Bib Cock",
+  "Nozel Cock",
+  "T-Arm",
+  "Cp Nipple",
+  "Spindle Complete",
+  "Goda Jori",
+  "Floor Waste",
+  "Jet Shower",
+  "Complete Concealed",
+  "Concealed Mixer",
+] as const;
+
+export type SanitarySubcategory = (typeof SANITARY_SUBCATEGORY_OPTIONS)[number];
+
+export const PRODUCT_FINISH_OPTIONS = [
+  "Chrome",
+  "Gold",
+  "Black & Gold",
+  "Black",
+  "White",
+  "Ivory",
+  "Grey",
+  "Pink",
+  "Sky Blue",
+] as const;
+
+export type ProductFinish = (typeof PRODUCT_FINISH_OPTIONS)[number];
 
 export interface SanitaryProduct {
   id: string;
   sku: string;
   name: string;
-  category: SanitaryCategory;
-  subcategory?: SanitarySubcategory;
-  finish?: ProductFinish;
+  /** Predefined category, or a custom value added through the dropdown. */
+  category: string;
+  /** Predefined subcategory, or a custom value added through the dropdown. */
+  subcategory?: string;
+  /** Predefined finish, or a custom value added through the dropdown. */
+  finish?: string;
   material?: string;
   unit_price: number;
   total_stock: number;
@@ -66,19 +108,3 @@ export interface ProductDelivery {
   created_at: string;
 }
 
-export const SANITARY_CATEGORIES: Record<SanitaryCategory, string[]> = {
-  "Faucets & Mixers": ["Single Lever", "Wall Mounted", "Sensor Taps"],
-  "Ceramics & Porcelain": ["Water Closets", "Wash Basins", "Pedestals", "Bidets"],
-  "Showers & Accessories": ["Rain Showers", "Hand Showers", "Towel Rails", "Drain Grates"],
-  "Piping & Valves": ["Angle Valves", "Waste Pipes", "Fittings"],
-};
-
-export const PRODUCT_FINISHES: ProductFinish[] = [
-  "Chrome",
-  "Matte Black",
-  "Brushed Nickel",
-  "Brass",
-  "Ceramic",
-  "White",
-  "Other",
-];

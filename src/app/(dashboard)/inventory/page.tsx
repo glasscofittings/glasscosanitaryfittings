@@ -8,10 +8,15 @@ import {
   computeStockAlerts,
   deleteSanitaryProduct,
 } from "@/lib/supabase/catalog";
-import type { SanitaryProduct, SanitaryCategory, SanitarySubcategory, ProductFinish } from "@/types";
-import { SANITARY_CATEGORIES, PRODUCT_FINISHES } from "@/types";
+import type { SanitaryProduct } from "@/types";
+import {
+  SANITARY_CATEGORY_OPTIONS,
+  SANITARY_SUBCATEGORY_OPTIONS,
+  PRODUCT_FINISH_OPTIONS,
+} from "@/types";
 import { exportProductsToPDF, exportProductToPDF } from "@/lib/pdf-exporter";
 import EditProductModal from "@/components/modules/catalog/EditProductModal";
+import ProductOptionCombobox from "@/components/ui/ProductOptionCombobox";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { capitalizeFirst } from "@/lib/utils";
 
@@ -419,9 +424,9 @@ function AddSanitaryProductModal({
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
-  const [category, setCategory] = useState("Faucets & Mixers");
+  const [category, setCategory] = useState<string>(SANITARY_CATEGORY_OPTIONS[0]);
   const [subcategory, setSubcategory] = useState("");
-  const [finish, setFinish] = useState("Chrome");
+  const [finish, setFinish] = useState<string>(PRODUCT_FINISH_OPTIONS[0]);
   const [unitPrice, setUnitPrice] = useState("");
   const [reorderLevel, setReorderLevel] = useState("10");
   const [submitting, setSubmitting] = useState(false);
@@ -438,9 +443,9 @@ function AddSanitaryProductModal({
     const { data, error: createError } = await createSanitaryProduct({
       sku: sku.trim(),
       name: name.trim(),
-      category: category as SanitaryCategory,
-      subcategory: (subcategory as SanitarySubcategory) || undefined,
-      finish: finish as ProductFinish,
+      category: category.trim(),
+      subcategory: subcategory.trim() || undefined,
+      finish: finish.trim() || undefined,
       unit_price: parseFloat(unitPrice) || 0,
       reorder_level: parseInt(reorderLevel) || 10,
     });
@@ -486,16 +491,37 @@ function AddSanitaryProductModal({
                 <input type="text" value={sku} onChange={(e) => setSku(e.target.value)} className={`${inputCls} font-mono`} placeholder="e.g. SNT-FAU-001" />
               </div>
               <div>
-                <label className={labelCls}>Category</label>
-                <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls} placeholder="Faucets & Mixers" />
+                <label className={labelCls} htmlFor="add-product-category">Category</label>
+                <ProductOptionCombobox
+                  id="add-product-category"
+                  aria-label="Category"
+                  value={category}
+                  onChange={setCategory}
+                  options={SANITARY_CATEGORY_OPTIONS}
+                  placeholder="Bath Set Deluxe"
+                />
               </div>
               <div>
-                <label className={labelCls}>Subcategory</label>
-                <input type="text" value={subcategory} onChange={(e) => setSubcategory(e.target.value)} className={inputCls} placeholder="Basin Mixers" />
+                <label className={labelCls} htmlFor="add-product-subcategory">Subcategory</label>
+                <ProductOptionCombobox
+                  id="add-product-subcategory"
+                  aria-label="Subcategory"
+                  value={subcategory}
+                  onChange={setSubcategory}
+                  options={SANITARY_SUBCATEGORY_OPTIONS}
+                  placeholder="Lever Set Complete"
+                />
               </div>
               <div>
-                <label className={labelCls}>Finish</label>
-                <input type="text" value={finish} onChange={(e) => setFinish(e.target.value)} className={inputCls} placeholder="Chrome" />
+                <label className={labelCls} htmlFor="add-product-finish">Finish</label>
+                <ProductOptionCombobox
+                  id="add-product-finish"
+                  aria-label="Finish"
+                  value={finish}
+                  onChange={setFinish}
+                  options={PRODUCT_FINISH_OPTIONS}
+                  placeholder="Chrome"
+                />
               </div>
               <div>
                 <label className={labelCls}>Unit Price (PKR)</label>

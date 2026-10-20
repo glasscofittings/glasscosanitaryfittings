@@ -196,7 +196,13 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       .nar-head{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#475569;}
       .nar-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;}
       .nar-body{margin-top:4px;font-size:11px;color:#1e293b;white-space:pre-wrap;}
-      .signatures{display:flex;margin-top:auto;padding-top:16px;border-top:1px solid #fa330bff;page-break-inside:avoid;}
+      /* Page foot = signatures + footer as one atomic block: bottom-anchored via
+         the flex auto-margin (dynamic spacing - it collapses so the block snaps
+         right below the totals when the page can't pin it), never orphaned onto
+         a fresh page while any room is left (break-before: avoid), never split
+         mid-block (break-inside: avoid). */
+      .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
+      .signatures{display:flex;padding-top:16px;border-top:1px solid #fa330bff;page-break-inside:avoid;}
       .sig{flex:1;text-align:center;font-size:10.5px;font-weight:700;color:#0f172a;padding:0 6px;}
       .sig .ur{text-align:center;font-weight:400;}
       .sig-name{margin-top:7px;font-size:10px;font-weight:400;color:#334155;border-top:1px dashed #94a3b8;display:inline-block;padding-top:3px;min-width:140px;}
@@ -206,7 +212,10 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       @page{size:A4 portrait;margin:0;}
       @media print{
         html,body{background:#fff;}
-        .sheet{margin:0;box-shadow:none;}
+        /* Reserve the REAL page area (100vh in print = paper minus @page
+           margins), not a hard 297mm: on Letter or with dialog/printer margins
+           a rigid 297mm sheet overflows the page and orphans the footer. */
+        .sheet{margin:0;box-shadow:none;min-height:100vh;}
         *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
         a[href]:after{content:none!important;}
       }
@@ -260,17 +269,19 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
         <div class="nar-body">${esc(data.narration) || "&mdash;"}</div>
       </div>
 
-      <div class="signatures">
-        <div class="sig">${urUnder("Prepared By", UR.preparedBy)}${
-          data.preparedBy ? `<div class="sig-name">${esc(data.preparedBy)}</div>` : ""
-        }</div>
-        <div class="sig">${urUnder("Receiver Signature", UR.receivedBy)}</div>
-        <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
-      </div>
+      <div class="page-foot">
+        <div class="signatures">
+          <div class="sig">${urUnder("Prepared By", UR.preparedBy)}${
+            data.preparedBy ? `<div class="sig-name">${esc(data.preparedBy)}</div>` : ""
+          }</div>
+          <div class="sig">${urUnder("Receiver Signature", UR.receivedBy)}</div>
+          <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
+        </div>
 
-      <div class="footer">
-        <div class="legal">${esc(footerBrand)}</div>
-        <div class="contact-line">${esc(contactEmail)} | ${esc(contactWebsite)} | ${esc(contactPhone)}</div>
+        <div class="footer">
+          <div class="legal">${esc(footerBrand)}</div>
+          <div class="contact-line">${esc(contactEmail)} | ${esc(contactWebsite)} | ${esc(contactPhone)}</div>
+        </div>
       </div>
     </div>
     </body></html>`;

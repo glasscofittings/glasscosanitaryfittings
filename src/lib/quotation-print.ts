@@ -266,7 +266,13 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .terms h4{margin:0 0 3px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
       .terms p{margin:1px 0;font-size:9.5px;color:#27272a;white-space:pre-wrap;}
       .disclaimer-note{margin-top:4mm;text-align:center;font-size:9px;color:#71717a;font-style:italic;}
-      .signatures{display:flex;justify-content:space-between;gap:30px;margin-top:auto;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
+      /* Page foot = signatures + footer as one atomic block: bottom-anchored via
+         the flex auto-margin (dynamic spacing - it collapses so the block snaps
+         right below the totals when the page can't pin it), never orphaned onto
+         a fresh page while any room is left (break-before: avoid), never split
+         mid-block (break-inside: avoid). */
+      .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
+      .signatures{display:flex;justify-content:space-between;gap:30px;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
       .sig{width:46%;text-align:center;font-size:10.5px;font-weight:700;color:#09090b;}
       .sig .ur{text-align:center;font-weight:600;}
       /* Footer */
@@ -277,7 +283,10 @@ export function generateQuotationHTML(quotation: Quotation): string {
       @page{size:A4 portrait;margin:0;}
       @media print{
         html,body{background:#fff;}
-        .sheet{margin:0;box-shadow:none;}
+        /* Reserve the REAL page area (100vh in print = paper minus @page
+           margins), not a hard 297mm: on Letter or with dialog/printer margins
+           a rigid 297mm sheet overflows the page and orphans the footer. */
+        .sheet{margin:0;box-shadow:none;min-height:100vh;}
         *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
         a[href]:after{content:none!important;}
       }
@@ -351,15 +360,17 @@ export function generateQuotationHTML(quotation: Quotation): string {
 
       <div class="disclaimer-note">* Note: This is a quotation proposal and does not constitute a final tax invoice or sale agreement.</div>
 
-      <div class="signatures">
-        <div class="sig">${urUnder("Received By (Customer)", "وصول کنندہ (گاہک)")}</div>
-        <div class="sig">${urUnder("Authorised Signatory", "اختیار یافتہ دستخط کنندہ")}</div>
-      </div>
+      <div class="page-foot">
+        <div class="signatures">
+          <div class="sig">${urUnder("Received By (Customer)", "وصول کنندہ (گاہک)")}</div>
+          <div class="sig">${urUnder("Authorised Signatory", "اختیار یافتہ دستخط کنندہ")}</div>
+        </div>
 
-      <div class="footer">
-        <div class="legal">${esc(footerBrand)}</div>
-        <div class="contact-line">${esc(contactEmail)} | ${esc(contactWebsite)} | ${esc(contactPhone)}</div>
-        ${socialParts.length > 0 ? `<div class="contact-line social-line">${socialParts.join(" | ")}</div>` : ""}
+        <div class="footer">
+          <div class="legal">${esc(footerBrand)}</div>
+          <div class="contact-line">${esc(contactEmail)} | ${esc(contactWebsite)} | ${esc(contactPhone)}</div>
+          ${socialParts.length > 0 ? `<div class="contact-line social-line">${socialParts.join(" | ")}</div>` : ""}
+        </div>
       </div>
     </div>
     </body></html>`;

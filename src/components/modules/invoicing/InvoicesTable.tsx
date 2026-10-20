@@ -119,7 +119,7 @@ export default function InvoicesTable({ invoices, onPost, onView, onEdit, onDele
                           onClick={() => onPost(inv)}
                           className="h-7 px-2.5 rounded-md bg-crimson-primary/10 text-crimson-light text-caption font-medium border border-crimson-primary/20 hover:bg-crimson-primary/20 transition-colors"
                         >
-                          Post
+                          Print
                         </button>
                       )}
                       <button

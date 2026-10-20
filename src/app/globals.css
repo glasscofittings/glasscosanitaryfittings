@@ -226,6 +226,8 @@
   --color-brand-coral-light: var(--brand-coral-light);
   --color-brand-navy: var(--brand-navy);
   --color-brand-canvas: var(--brand-canvas);
+  /* Dispatch workflow accent — brand blue used by active buttons and badges */
+  --color-brand-blue: #1D5298;
   --color-status-optimal: #10B981;
   --color-status-alert: #F43F5E;
   --color-status-amber: #F59E0B;

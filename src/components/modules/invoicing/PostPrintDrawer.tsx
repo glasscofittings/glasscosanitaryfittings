@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
-import { type SalesInvoice, type DispatchLineItem, postGSTPaintsInvoice, triggerPrint, generateInvoiceHTML, createDispatchRecord, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands, fetchInvoiceById } from "@/lib/supabase/invoicing";
+import { type SalesInvoice, type DispatchLineItem, triggerPrint, generateInvoiceHTML, createDispatchRecord, findDispatchRecordByInvoice, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
 import { useOperatorStore } from "@/lib/store/useOperatorStore";
 import { formatPKR } from "@/lib/utils/formatters";
 
@@ -41,7 +41,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
 
     let operatorName: string;
     try {
-      operatorName = await useOperatorStore.getState().open("Post GST Invoice & Print");
+      operatorName = await useOperatorStore.getState().open("Print Dispatch");
     } catch {
       return;
     }
@@ -49,37 +49,11 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
     setPosting(true);
     setStep("posting");
 
-    let rpcData: { invoice_number: string; total_payable: number } | null = null;
-    try {
-      const { data, error } = await postGSTPaintsInvoice({
-        invoice_id: invoice.id,
-        customer_id: invoice.customer_id,
-        taxable_value_pkr: invoice.taxable_value_pkr,
-        apply_further_tax: invoice.further_tax_amount_pkr > 0,
-        operator_name: operatorName,
-        device_node: process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
-        line_items: [],
-      });
-      if (error || !data) {
-        setStep("error");
-        setPrintResult(error ?? "Failed to post invoice via RPC. Check connection and try again.");
-        setPosting(false);
-        return;
-      }
-      rpcData = data;
-    } catch (err) {
-      console.error("RPC call threw an exception:", err);
-      setStep("error");
-      setPrintResult(err instanceof Error ? err.message : "RPC call failed unexpectedly.");
-      setPosting(false);
-      return;
-    }
-
-    setStep("posted");
-    setPosting(false);
-
-    // Persist dispatch record. Prefer explicit line items; fall back to the
-    // invoice's own items so products/customer survive on the dispatch row.
+    // Record the dispatch BEFORE printing: this row is what Dispatch History
+    // shows and what the Approve action operates on. Stock and the customer's
+    // ledger debit are NOT touched here — they only run when the dispatch is
+    // approved (approve_dispatch RPC). Re-prints reuse the existing record so
+    // an invoice never gets a duplicate dispatch entry.
     const dispatchLineItems: DispatchLineItem[] =
       lineItems.length > 0
         ? lineItems
@@ -93,55 +67,54 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
             discount_percent: i.discount_percent,
             discount_pkr: i.discount_pkr,
           }));
-    const dispatchRecord = await createDispatchRecord({
-      invoice_id: invoice.id,
-      invoice_number: rpcData.invoice_number || invoice.invoice_number,
-      customer_id: invoice.customer_id,
-      customer_name: invoice.parties?.name ?? "",
-      taxable_value_pkr: invoice.taxable_value_pkr,
-      sales_tax_rate: invoice.sales_tax_rate,
-      sales_tax_amount_pkr: invoice.sales_tax_amount_pkr,
-      further_tax_rate: invoice.further_tax_rate,
-      further_tax_amount_pkr: invoice.further_tax_amount_pkr,
-      total_invoice_value_pkr: rpcData.total_payable,
-      line_items: dispatchLineItems,
-      operator_name: operatorName,
-      device_node: process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
-    });
+
+    let dispatchRecord = await findDispatchRecordByInvoice(invoice.id);
+    if (!dispatchRecord) {
+      dispatchRecord = await createDispatchRecord({
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        customer_id: invoice.customer_id,
+        customer_name: invoice.parties?.name ?? "",
+        taxable_value_pkr: invoice.taxable_value_pkr,
+        sales_tax_rate: invoice.sales_tax_rate,
+        sales_tax_amount_pkr: invoice.sales_tax_amount_pkr,
+        further_tax_rate: invoice.further_tax_rate,
+        further_tax_amount_pkr: invoice.further_tax_amount_pkr,
+        total_invoice_value_pkr: invoice.total_invoice_value_pkr,
+        line_items: dispatchLineItems,
+        operator_name: operatorName,
+        device_node: process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
+        status: "pending_approval",
+        dispatch_date: new Date().toISOString().slice(0, 10),
+      });
+    }
     if (!dispatchRecord) {
       toast.warning(
-        `Invoice ${rpcData.invoice_number || invoice.invoice_number} was posted, but its dispatch record could not be saved.`
+        `Invoice ${invoice.invoice_number} printed, but its dispatch record could not be saved — reprint to retry, otherwise it cannot be approved.`
       );
     }
+
+    setStep("posted");
+    setPosting(false);
 
     setPrinting(true);
     setStep("printing");
 
-    // The RPC has already recalculated + persisted the final invoice row.
-    // Re-fetch it from the database so the PDF is rendered from the
-    // authoritative saved record (tax = 0 by default) rather than the stale
-    // component state that was captured before posting. This removes the
-    // "print twice to see correct values" bug.
-    const fresh = await fetchInvoiceById(invoice.id);
-
-    // Build a fully-enriched invoice for printing from the freshly-saved row.
-    // Fall back to the pre-post invoice only if the refetch fails, and always
-    // carry the RPC-confirmed total so the printed total matches the ledger.
-    const postedInvoice: SalesInvoice = {
-      ...(fresh ?? invoice),
-      total_invoice_value_pkr: rpcData.total_payable,
+    // Nothing recalculates the invoice during print (posting happens at
+    // approval), so print straight from the saved row — always carrying the
+    // invoice's own items for the template.
+    const savedInvoice: SalesInvoice = {
+      ...invoice,
       items:
-        fresh && fresh.items && fresh.items.length > 0
-          ? fresh.items
-          : (invoice.items && invoice.items.length > 0
-              ? invoice.items
-              : dispatchItemsToInvoiceItems(invoice.id, lineItems)),
+        invoice.items && invoice.items.length > 0
+          ? invoice.items
+          : dispatchItemsToInvoiceItems(invoice.id, lineItems),
     };
-    setPostedInvoice(postedInvoice);
+    setPostedInvoice(savedInvoice);
 
     let printRes;
     try {
-      printRes = await triggerPrint(postedInvoice);
+      printRes = await triggerPrint(savedInvoice);
     } catch (err) {
       console.error("Print call threw an exception:", err);
       setStep("error");
@@ -231,7 +204,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
       <div className={`drawer-panel ${open ? "" : "closed"}`}>
         <div className="drawer-header">
           <div>
-            <h2 className="text-h2 font-semibold">Post &amp; Print</h2>
+            <h2 className="text-h2 font-semibold">Print Dispatch</h2>
             <p className="text-caption text-muted font-mono mt-0.5">{invoice.invoice_number}</p>
           </div>
           <button
@@ -277,7 +250,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
               status={step === "idle" ? "pending" : step === "posting" ? "done" : step === "posted" || step === "printing" || step === "print-done" ? "done" : step === "error" ? "error" : "pending"}
             />
             <StepIndicator
-              label="Post GST invoice via RPC"
+              label="Record dispatch (pending approval)"
               status={step === "idle" ? "pending" : step === "posting" ? "active" : step === "posted" || step === "printing" || step === "print-done" ? "done" : step === "error" && !posting ? "error" : "pending"}
             />
             <StepIndicator
@@ -300,7 +273,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
 
           {step === "print-done" && (
             <div className="bg-status-optimal/10 border border-status-optimal/20 rounded-lg p-3 text-caption text-status-optimal">
-              <p className="font-medium">Invoice posted, ledger entry created, and print job dispatched.</p>
+              <p className="font-medium">Invoice printed and recorded as a dispatch. Stock and the customer ledger update only when it is approved from Dispatch History.</p>
             </div>
           )}
 
@@ -311,7 +284,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
                 disabled={posting}
                 className="flex-1 h-9 rounded-lg bg-crimson-primary text-white font-medium text-body hover:bg-crimson-dark disabled:bg-bg-muted disabled:text-disabled disabled:cursor-not-allowed transition-colors"
               >
-                Post &amp; Print
+                Print Dispatch
               </button>
             )}
             {(step === "posted" || step === "print-done") && (
