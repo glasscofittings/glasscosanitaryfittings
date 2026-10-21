@@ -10,6 +10,12 @@ import type { LabourTask, LabourTaskStatus } from '@/lib/store/useLabourTaskStor
 import { type InwardGatePass, effectiveAcceptedQty, normalizeUom } from '@/lib/supabase/procurement'
 import type { JournalEntryWithLines, FinancialStatements, PLRow, BalanceSheetRow } from '@/lib/supabase/ledger'
 import { numberToWords, type PaymentVoucher } from '@/lib/supabase/payment-vouchers'
+import {
+  PAYROLL_TYPE_LABELS,
+  EMPLOYMENT_TYPE_LABELS,
+  PAYMENT_METHOD_LABELS,
+  type PayrollEntry,
+} from '@/lib/supabase/payroll'
 import type { Expense } from '@/lib/supabase/expenses'
 import type { ProductCostMarginSummary, ProductPurchase } from '@/lib/supabase/purchases'
 import type { Quotation } from '@/lib/supabase/quotations'
@@ -2740,6 +2746,196 @@ export async function exportPaymentVoucherPDF(
 
   drawReportFooter(doc, `${title} ${voucher.voucher_no}`)
   outputReport(doc, `glassco_${typeEn.short.toLowerCase()}_${voucher.voucher_no}.pdf`)
+  return doc
+}
+
+/* ─── Payroll Payment Voucher (traditional blue Glassco layout) ──────────── */
+
+export async function exportPayrollVoucherPDF(
+  entry: PayrollEntry,
+  options: { operatorName?: string } = {}
+): Promise<jsPDF> {
+  const doc = createReportDoc('portrait')
+  const hasUrdu = await ensureUrduFont(doc)
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const contentWidth = pageWidth - MARGIN * 2
+  /* Traditional voucher palette: #0B3B82 navy title, #1E56A0 banner/grid blue, #EBF3FA total tint. */
+  const NAVY: RGB = [11, 59, 130]
+  const BLUE: RGB = [30, 86, 160]
+  const TINT: RGB = [235, 243, 250]
+  const ur = (text: string) => (hasUrdu ? text : undefined)
+  const profile = loadCompanyProfile()
+
+  /* 1. Masthead — centred navy company title */
+  drawCompanyLogo(doc, MARGIN, 6, 15, 15)
+  doc.setFont('times', 'bold')
+  doc.setFontSize(20)
+  doc.setTextColor(...NAVY)
+  doc.text(COMPANY_HEADER.toUpperCase(), pageWidth / 2, 18, { align: 'center' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
+  doc.setTextColor(...C.muted)
+  doc.text('Sanitary Products Distribution & Retail Management System', pageWidth / 2, 23, { align: 'center' })
+
+  /* 2. Blue banner — bilingual voucher title */
+  let y = 28
+  const bannerHeight = hasUrdu ? 13 : 9
+  const bannerTitle = 'PAYROLL PAYMENT VOUCHER'
+  doc.setFillColor(...BLUE)
+  doc.rect(MARGIN, y, contentWidth, bannerHeight, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(...C.white)
+  if (hasUrdu) {
+    const enWidth = doc.getTextWidth(bannerTitle)
+    const blockX = (pageWidth - (enWidth + 8 + 30)) / 2
+    doc.text(bannerTitle, blockX, y + 8)
+    doc.text('/', blockX + enWidth + 4, y + 8)
+    drawUrdu(doc, 'پے رول واؤچر', blockX + enWidth + 9, y + 8.4, { fontSize: 11, color: C.white })
+  } else {
+    doc.text(bannerTitle, pageWidth / 2, y + 6.4, { align: 'center' })
+  }
+  y += bannerHeight + 6
+
+  /* 3. Meta grid — two label/value pairs per row, then full-width rows */
+  const labelWidth = 36
+  const pairValueWidth = contentWidth / 2 - labelWidth
+  const missing = (value: string | null | undefined): BilingualCell =>
+    value ? { en: value } : { en: '-', ur: ur(UR.notProvided) }
+  y = drawBilingualTable(doc, {
+    startY: y,
+    columnWidths: [labelWidth, pairValueWidth, labelWidth, pairValueWidth],
+    labelColumns: [0, 2],
+    body: [
+      [
+        { en: 'Voucher No', ur: ur(UR.voucherNo) },
+        { en: entry.entry_number },
+        { en: 'Payment Date', ur: ur(UR.date) },
+        { en: formatDate(entry.payroll_date), ur: ur(formatUrduDate(entry.payroll_date)) },
+      ],
+      [
+        { en: 'Payee / Employee', ur: ur(UR.payeeName) },
+        { en: entry.employee_name },
+        { en: 'Payment Method', ur: ur(UR.paymentMethod) },
+        { en: PAYMENT_METHOD_LABELS[entry.payment_method] },
+      ],
+      [
+        { en: 'Debit Account', ur: ur(UR.debitAccount) },
+        missing(entry.expense_account ? accountLabel(entry.expense_account) : null),
+        { en: 'Credit Account', ur: ur(UR.creditAccount) },
+        missing(entry.payment_account ? accountLabel(entry.payment_account) : null),
+      ],
+    ],
+  })
+  y = drawBilingualTable(doc, {
+    startY: y + 4,
+    columnWidths: [labelWidth, contentWidth - labelWidth],
+    labelColumns: [0],
+    body: [
+      [
+        { en: 'Amount in Words', ur: ur(UR.amountInWords) },
+        { en: numberToWords(entry.amount), ur: ur(numberToUrduWords(entry.amount)) },
+      ],
+      [{ en: 'Notes', ur: ur(UR.remarks) }, missing(entry.notes)],
+      [{ en: 'Created By', ur: ur(UR.createdBy) }, { en: options.operatorName || entry.operator_name || '-' }],
+    ],
+  })
+  y += 6
+
+  /* 4. Items table — blue header + grid borders */
+  y = ensureRoom(doc, y, 46)
+  autoTable(doc, {
+    startY: y,
+    theme: 'grid',
+    head: [['SR. #', 'EMPLOYEE / PAYEE', 'COST CATEGORY', 'EMPLOYMENT TYPE', 'AMOUNT (PKR)']],
+    body: [
+      [
+        '1',
+        entry.employee_name,
+        PAYROLL_TYPE_LABELS[entry.payroll_type],
+        EMPLOYMENT_TYPE_LABELS[entry.employment_type],
+        entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      ],
+    ],
+    margin: { left: MARGIN, right: MARGIN },
+    styles: { cellPadding: 3, overflow: 'linebreak', lineColor: BLUE, lineWidth: 0.35, fontSize: 8.5, valign: 'middle' },
+    headStyles: { fillColor: BLUE, textColor: C.white, fontSize: 8, fontStyle: 'bold', halign: 'center', lineColor: BLUE },
+    bodyStyles: { textColor: C.ink },
+    columnStyles: {
+      0: { cellWidth: contentWidth * 0.08, halign: 'center' },
+      1: { cellWidth: contentWidth * 0.32, halign: 'left' },
+      2: { cellWidth: contentWidth * 0.22, halign: 'center' },
+      3: { cellWidth: contentWidth * 0.2, halign: 'center' },
+      4: { cellWidth: contentWidth * 0.18, halign: 'right' },
+    },
+  })
+  y = getFinalY(doc) + 8
+
+  /* 5. Totals box — light-blue tint row, right aligned */
+  y = ensureRoom(doc, y, 18)
+  const boxWidth = contentWidth * 0.45
+  const boxX = pageWidth - MARGIN - boxWidth
+  doc.setFillColor(...TINT)
+  doc.setDrawColor(...BLUE)
+  doc.setLineWidth(0.4)
+  doc.rect(boxX, y, boxWidth, 11, 'FD')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(...NAVY)
+  doc.text('Total Disbursed', boxX + 4, y + 7)
+  doc.text(formatPKRPrecise(entry.amount), pageWidth - MARGIN - 4, y + 7, { align: 'right' })
+  y += 17
+
+  /* 6. Signatures — Received By + Authorised Signatory */
+  const signatures = [
+    { en: 'Received By (Employee / Payee)', ur: UR.receivedBy },
+    { en: 'Authorised Signatory', ur: UR.approvedBy },
+  ]
+  const sigWidth = contentWidth * 0.4
+  const sigGap = contentWidth - sigWidth * 2
+  y += 22
+  y = ensureRoom(doc, y, 30)
+  signatures.forEach((sig, i) => {
+    const x = MARGIN + i * (sigWidth + sigGap)
+    doc.setDrawColor(...BLUE)
+    doc.setLineWidth(0.4)
+    doc.line(x, y, x + sigWidth, y)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.setTextColor(...NAVY)
+    doc.text(sig.en, x + sigWidth / 2, y + 5, { align: 'center' })
+    let next = y + 5
+    if (hasUrdu) next = drawUrdu(doc, sig.ur, x + sigWidth / 2, y + 10, { align: 'center', fontSize: 9, color: C.slate })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(...C.muted)
+    doc.text('Signature & Date', x + sigWidth / 2, next + 3.5, { align: 'center' })
+    if (hasUrdu) drawUrdu(doc, UR.signatureDate, x + sigWidth / 2, next + 8, { align: 'center', fontSize: 8, color: C.muted })
+  })
+
+  /* 7. Footer — legal name + contact line under a blue rule */
+  for (let p = 1; p <= doc.getNumberOfPages(); p++) {
+    doc.setPage(p)
+    doc.setDrawColor(...BLUE)
+    doc.setLineWidth(0.3)
+    doc.line(MARGIN, pageHeight - 15, pageWidth - MARGIN, pageHeight - 15)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...NAVY)
+    doc.text(COMPANY_LEGAL_NAME.toUpperCase(), pageWidth / 2, pageHeight - 11, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(...C.slate)
+    doc.text(
+      `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`,
+      pageWidth / 2,
+      pageHeight - 7,
+      { align: 'center' }
+    )
+  }
+
+  outputReport(doc, `glassco_payroll_voucher_${entry.entry_number}.pdf`)
   return doc
 }
 

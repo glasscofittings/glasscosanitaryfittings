@@ -2,6 +2,11 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import {
+  filterProductOptions,
+  isKnownProductOption,
+  normalizeProductOption,
+} from "@/lib/product-options";
 
 const DEFAULT_INPUT_CLS =
   "w-full h-9 pl-3 pr-9 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-body focus:border-crimson-primary focus:outline-none focus:ring-1 focus:ring-crimson-primary/50 transition-colors";
@@ -27,10 +32,17 @@ interface Props {
  * it, or that contain it. Picking one commits the exact predefined spelling so
  * products group cleanly in reports.
  *
- * The last row is always "+ Add Custom": picking it switches the field into
- * custom mode so any value can be typed and saved. A value that is already not
- * in the list (e.g. a legacy DB value when editing) is treated as custom too,
- * with a "Choose from list" link to clear it and pick a predefined option.
+ * The typed query lives in its own `search` state and is only used to filter
+ * while the list is open; the committed `value` is never touched by searching.
+ * (Binding the filter to `value` was the original bug: any partial query such
+ * as "Lever" was an unknown value, which flipped the field into custom mode and
+ * hid the list — so typing appeared to return no results.)
+ *
+ * The last row is always "+ Add Custom": picking it carries the typed query into
+ * the field (if any) and switches to custom mode so any value can be typed and
+ * saved. A value that is already not in the list (e.g. a legacy DB value when
+ * editing) is flagged as custom too, with a "Choose from list" link to clear it
+ * and pick a predefined option.
  */
 export default function ProductOptionCombobox({
   value,
@@ -44,6 +56,8 @@ export default function ProductOptionCombobox({
   "aria-label": ariaLabel,
 }: Props) {
   const [open, setOpen] = useState(false);
+  /** Filter text while the list is open — deliberately separate from `value`. */
+  const [search, setSearch] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const [customMode, setCustomMode] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -59,27 +73,23 @@ export default function ProductOptionCombobox({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const query = value.trim().toLowerCase();
-  const isKnownOption = query !== "" && options.some((o) => o.toLowerCase() === query);
+  const query = normalizeProductOption(search);
+  const normalizedValue = normalizeProductOption(value);
+  const isKnownOption = isKnownProductOption(value, options);
   const isCustomValue = value.trim() !== "" && !isKnownOption;
-  const inCustomMode = customMode || isCustomValue;
+  const showCustomHint = customMode || (isCustomValue && !open);
 
-  const matches = useMemo(() => {
-    if (!query) return [...options];
-    const startsWith = options.filter((o) => o.toLowerCase().startsWith(query));
-    const wordStarts = options.filter(
-      (o) => !o.toLowerCase().startsWith(query) && o.toLowerCase().split(/\s+/).some((w) => w.startsWith(query))
-    );
-    const contains = options.filter(
-      (o) => !startsWith.includes(o) && !wordStarts.includes(o) && o.toLowerCase().includes(query)
-    );
-    return [...startsWith, ...wordStarts, ...contains];
-  }, [options, query]);
+  // Ranked, normalised label search (see src/lib/product-options.ts).
+  const matches = useMemo(() => filterProductOptions(options, query), [options, query]);
 
   // "+ Add Custom" is the final row; -1 when custom values are not allowed.
   const customRowIndex = allowCustom ? matches.length : -1;
   const rowCount = matches.length + (allowCustom ? 1 : 0);
-  const showList = open && !inCustomMode && rowCount > 0;
+  const showList = open && !customMode && rowCount > 0;
+
+  // Show the committed value when closed (or while editing a custom value);
+  // show the live query only while the list is open for browsing.
+  const inputText = customMode || !open ? value : search;
 
   // Keep the highlighted row visible while arrowing through a long list.
   useEffect(() => {
@@ -87,15 +97,27 @@ export default function ProductOptionCombobox({
     listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, showList]);
 
+  function openList() {
+    if (customMode) return;
+    setSearch(""); // a fresh browse always starts from the full list
+    setActiveIndex(-1);
+    setOpen(true);
+  }
+
   function pick(option: string) {
     onChange(option);
     setCustomMode(false);
+    setSearch("");
     setOpen(false);
     setActiveIndex(-1);
   }
 
   function startCustom() {
+    // Carry what was typed into the value so the query becomes the custom entry.
+    const typed = search.trim();
+    if (typed) onChange(typed);
     setCustomMode(true);
+    setSearch("");
     setOpen(false);
     setActiveIndex(-1);
     inputRef.current?.focus();
@@ -105,16 +127,23 @@ export default function ProductOptionCombobox({
     setCustomMode(false);
     // A value that is not predefined cannot stay once back in list mode.
     if (isCustomValue) onChange("");
+    setSearch("");
+    setActiveIndex(-1);
+    setOpen(true); // show the options straight away so picking is one step
     inputRef.current?.focus();
   }
 
   function toggleList() {
-    if (inCustomMode) {
+    if (customMode) {
       inputRef.current?.focus();
       return;
     }
-    setOpen((o) => !o);
-    setActiveIndex(-1);
+    if (open) {
+      setOpen(false);
+      setActiveIndex(-1);
+    } else {
+      openList();
+    }
     inputRef.current?.focus();
   }
 
@@ -125,6 +154,7 @@ export default function ProductOptionCombobox({
       if (showList) {
         setOpen(false);
         setActiveIndex(-1);
+        setSearch("");
         e.preventDefault();
         e.stopPropagation();
       } else if (customMode) {
@@ -134,11 +164,11 @@ export default function ProductOptionCombobox({
       }
       return;
     }
-    if (inCustomMode) return; // free typing: let Enter bubble to the form
+    if (customMode) return; // free typing: let Enter bubble to the form
 
     if (!showList) {
       if (e.key === "ArrowDown" && rowCount > 0) {
-        setOpen(true);
+        openList();
         setActiveIndex(0);
         e.preventDefault();
       }
@@ -158,6 +188,7 @@ export default function ProductOptionCombobox({
         pick(matches[activeIndex]);
       } else {
         setOpen(false);
+        setSearch("");
       }
     }
   }
@@ -169,15 +200,23 @@ export default function ProductOptionCombobox({
           ref={inputRef}
           id={id}
           type="text"
-          value={value}
+          value={inputText}
           onChange={(e) => {
-            onChange(e.target.value);
-            if (!customMode) {
-              setOpen(true);
-              setActiveIndex(-1);
+            if (customMode) {
+              onChange(e.target.value); // editing the committed value directly
+              return;
             }
+            setSearch(e.target.value);
+            if (!open) setOpen(true);
+            setActiveIndex(-1);
           }}
-          onFocus={() => { if (!inCustomMode) setOpen(true); }}
+          onFocus={() => { if (!customMode) openList(); }}
+          onBlur={() => {
+            if (customMode) return;
+            setOpen(false);
+            setActiveIndex(-1);
+            setSearch("");
+          }}
           onKeyDown={onKeyDown}
           className={cn(DEFAULT_INPUT_CLS, className)}
           placeholder={placeholder}
@@ -211,7 +250,7 @@ export default function ProductOptionCombobox({
           ref={listRef}
           id={listId}
           role="listbox"
-          className="absolute left-0 right-0 top-full mt-1 z-50 max-h-60 overflow-y-auto rounded-lg border border-border-default bg-obsidian-bg shadow-xl py-1"
+          className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-obsidian-bg shadow-xl py-1"
         >
           {matches.length === 0 && (
             <li className="px-3 py-2 text-body text-muted italic">No matching option — type your own below.</li>
@@ -226,7 +265,7 @@ export default function ProductOptionCombobox({
               onMouseEnter={() => setActiveIndex(i)}
               className={`px-3 py-2 cursor-pointer text-body ${
                 i === activeIndex ? "bg-bg-muted text-foreground" : "text-secondary hover:bg-bg-subtle"
-              } ${option.toLowerCase() === query ? "text-crimson-primary" : ""}`}
+              } ${normalizeProductOption(option) === normalizedValue && normalizedValue !== "" ? "text-crimson-primary" : ""}`}
             >
               {query ? highlight(option, query) : option}
             </li>
@@ -250,7 +289,7 @@ export default function ProductOptionCombobox({
         </ul>
       )}
 
-      {inCustomMode && (
+      {showCustomHint && (
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <span className="text-caption text-status-amber">Custom value &mdash; saved as typed</span>
           <button

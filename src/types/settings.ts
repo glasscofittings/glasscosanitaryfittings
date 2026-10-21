@@ -17,7 +17,7 @@ export const MODULE_VISIBILITY_STORAGE_KEY = "glassco_sidebar_modules";
 /** Sidebar sections, used as category labels in Settings. */
 export type ModuleGroup = "core" | "finance" | "procurement" | "warehouse" | "hr";
 
-/** Every sidebar key: 11 modules + settings = 12. */
+/** Every sidebar key: 12 modules + settings = 13. */
 export type ModuleKey =
   | "dashboard"
   | "crm"
@@ -31,6 +31,7 @@ export type ModuleKey =
   | "catalog"
   | "labour"
   | "expenses"
+  | "payroll"
   | "settings";
 
 /** `true` = menu item visible in the sidebar. */
@@ -59,6 +60,7 @@ export const MODULE_KEYS: readonly ModuleKey[] = [
   "catalog",
   "labour",
   "expenses",
+  "payroll",
   "settings",
 ];
 
@@ -76,6 +78,7 @@ export const DEFAULT_MODULE_VISIBILITY: ModuleVisibility = {
   catalog: true,
   labour: true,
   expenses: true,
+  payroll: true,
   settings: true,
 };
 
@@ -108,6 +111,7 @@ export const SIDEBAR_MODULES: readonly SidebarModule[] = [
 
   // ── Human Resources
   { key: "labour", href: "/labour/", label: "Labour / HR", group: "hr" },
+  { key: "payroll", href: "/payroll/", label: "Payroll", group: "hr" },
 
   // ── Pinned to the sidebar footer
   { key: "settings", href: "/settings/", label: "Settings", locked: true },

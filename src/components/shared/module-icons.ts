@@ -12,6 +12,7 @@ import {
   Barcode,
   Wallet,
   FileText,
+  Banknote,
 } from "lucide-react";
 import type { ModuleKey } from "@/types/settings";
 
@@ -28,6 +29,7 @@ export const MODULE_ICONS: Record<ModuleKey, ElementType> = {
   catalog: Barcode,
   labour: Users,
   expenses: Wallet,
+  payroll: Banknote,
   quotations: FileText,
   settings: Settings,
 };
