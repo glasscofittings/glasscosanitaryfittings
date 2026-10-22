@@ -12,7 +12,7 @@ import { formatPKR } from "@/lib/utils/formatters";
  *  - Pending Approval → warning/amber
  *  - Approved         → info/blue (#1D5298 brand blue)
  *  - Dispatched       → success/green
- * Rows without a status (database predates migration 20261107010000) are
+ * Records without a status (database predates migration 20261107010000) are
  * legacy completed dispatches and render as "Dispatched".
  */
 function StatusBadge({ status }: { status?: DispatchStatus }) {
@@ -86,7 +86,6 @@ export default function DispatchHistoryTable({
                 ? items.map((i: DispatchLineItem) => `${i.product_name} (${i.quantity})`).join(", ")
                 : "—";
               const status: DispatchStatus = rec.status ?? "dispatched";
-              const pending = status === "pending_approval";
               const busy = approvingId !== null;
               return (
                 <tr key={rec.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
@@ -107,25 +106,8 @@ export default function DispatchHistoryTable({
                     {new Date(rec.posted_at).toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </td>
                   <td className="px-4 py-3 text-caption text-secondary">{rec.operator_name || "—"}</td>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                  <td className="px-4 py-3 text-center whitespace-nowrap">
                     <div className="flex items-center justify-center gap-2">
-                      {pending && (
-                        <button
-                          onClick={() => onApprove(rec)}
-                          disabled={busy}
-                          title={`Approve dispatch ${rec.invoice_number} — deduct stock and post the customer ledger debit`}
-                          className="h-7 px-2.5 rounded-md bg-brand-blue text-white text-caption font-medium border border-brand-blue hover:bg-brand-blue/90 transition-colors inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {approvingId === rec.id ? (
-                            <span className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin shrink-0" />
-                          ) : (
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                          {approvingId === rec.id ? "Approving..." : "Approve"}
-                        </button>
-                      )}
                       <button
                         onClick={() => onEdit(rec)}
                         title={`Edit dispatch ${rec.invoice_number}`}

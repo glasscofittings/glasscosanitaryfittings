@@ -2,7 +2,8 @@ import { printPdfDocument } from "@/lib/tauri-bridge";
 import { fetchPartyPaymentVouchers, type PaymentVoucher } from "@/lib/supabase/payment-vouchers";
 import { UR, URDU_HTML_STYLES, urUnder } from "@/lib/pdf-urdu";
 import { getCompanyLogoHtml, getExportCompanyName } from "@/lib/company-settings";
-import { COMPANY_HEADER, COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME, SERIF_FONT_FAMILY_CSS } from "@/lib/branding";
+import { COMPANY_HEADER, COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME } from "@/lib/branding";
+import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
 import {
   balanceAmountLabel,
   balanceSide,
@@ -682,9 +683,8 @@ export function generatePartyLedgerHTML(
     <style>
       ${URDU_HTML_STYLES}
       @page{size:A4;margin:14mm 12mm 18mm 12mm;}
-      body{font-family:${SERIF_FONT_FAMILY_CSS};margin:0;padding:0;color:#111;font-size:12px;}
-      @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap;}
-      @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
+      ${SANS_FONT_FACES_CSS}
+      body{font-family:${SANS_FONT_FAMILY_CSS};margin:0;padding:0;color:#111;font-size:12px;font-weight:400;}
       .stamp{text-align:right;font-size:11px;color:#333;margin-bottom:6px;}
       .company{font-size:${COMPANY_HEADER_FONT_SIZE_PX}px;font-weight:700;margin:0;}
       .company-block{display:flex;align-items:center;gap:10px;}
@@ -693,24 +693,24 @@ export function generatePartyLedgerHTML(
       .period{font-size:11px;margin:0 0 10px 0;}
       .top{display:flex;justify-content:space-between;align-items:flex-start;}
       .opening{text-align:right;}
-      .opening .label{font-size:11px;font-weight:700;}
-      .opening .value{font-size:15px;font-weight:700;margin-top:2px;}
+      .opening .label{font-size:11px;font-weight:600;}
+      .opening .value{font-size:15px;font-weight:600;margin-top:2px;}
       .customer{margin:6px 0 10px 0;}
-      .customer .name{font-size:14px;font-weight:700;text-decoration:underline;margin-bottom:4px;}
+      .customer .name{font-size:14px;font-weight:600;text-decoration:underline;margin-bottom:4px;}
       .customer .meta{font-size:11px;color:#333;line-height:1.5;}
       .customer .meta span{display:inline-block;margin-right:18px;}
       table{width:100%;border-collapse:collapse;}
-      thead th{font-size:11px;font-weight:700;text-align:left;padding:6px 6px;border-top:1.5px solid #111;border-bottom:1.5px solid #111;}
+      thead th{font-size:11px;font-weight:600;text-align:left;padding:6px 6px;border-top:1.5px solid #111;border-bottom:1.5px solid #111;}
       thead th.num{text-align:right;}
       tbody td{padding:7px 6px;border-bottom:1px solid #999;vertical-align:top;font-size:11px;}
-      td.date{white-space:nowrap;width:64px;}
-      td.mono{font-family:"Courier New",monospace;white-space:nowrap;width:80px;}
+      td.date{white-space:nowrap;width:64px;font-variant-numeric:tabular-nums;}
+      td.mono{font-variant-numeric:tabular-nums;white-space:nowrap;width:80px;}
       td.remarks{font-size:10px;line-height:1.35;}
-      td.num{text-align:right;white-space:nowrap;font-family:"Courier New",monospace;width:80px;}
-      td.bold{font-weight:700;}
+      td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;width:80px;}
+      td.bold{font-weight:600;}
       td.empty{text-align:center;color:#777;padding:18px 6px;}
-      tfoot td{padding:8px 6px;border-top:1.5px solid #111;border-bottom:1.5px solid #111;font-weight:700;font-size:11px;}
-      tfoot td.num{text-align:right;font-family:"Courier New",monospace;}
+      tfoot td{padding:8px 6px;border-top:1.5px solid #111;border-bottom:1.5px solid #111;font-weight:600;font-size:11px;}
+      tfoot td.num{text-align:right;font-variant-numeric:tabular-nums;}
       thead{display:table-header-group;}
       tfoot{display:table-footer-group;}
       tr{page-break-inside:avoid;}

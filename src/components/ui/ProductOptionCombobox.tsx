@@ -6,6 +6,7 @@ import {
   filterProductOptions,
   isKnownProductOption,
   normalizeProductOption,
+  resolveOptionCommit,
 } from "@/lib/product-options";
 
 const DEFAULT_INPUT_CLS =
@@ -114,13 +115,41 @@ export default function ProductOptionCombobox({
 
   function startCustom() {
     // Carry what was typed into the value so the query becomes the custom entry.
-    const typed = search.trim();
-    if (typed) onChange(typed);
+    // An exact match on a predefined option snaps to its canonical spelling.
+    const commit = resolveOptionCommit(search, options);
+    if (commit) {
+      if (!commit.isCustom) {
+        pick(commit.value);
+        return;
+      }
+      onChange(commit.value);
+    }
     setCustomMode(true);
     setSearch("");
     setOpen(false);
     setActiveIndex(-1);
     inputRef.current?.focus();
+  }
+
+  /**
+   * Commit whatever was typed in list mode without dropping it.
+   *
+   * Runs on blur (the user clicks "Add Product" or another field) and on Enter
+   * with no row highlighted. An exact option match is stored with the
+   * predefined spelling; any other text becomes the custom value in the parent
+   * form state. Escape remains the explicit cancel path (list-mode Escape
+   * clears the query without committing).
+   */
+  function commitTypedSearch() {
+    const commit = resolveOptionCommit(search, options);
+    if (commit && !commit.isCustom) {
+      pick(commit.value);
+      return;
+    }
+    if (commit) onChange(commit.value);
+    setSearch("");
+    setOpen(false);
+    setActiveIndex(-1);
   }
 
   function chooseFromList() {
@@ -187,8 +216,8 @@ export default function ProductOptionCombobox({
       } else if (activeIndex >= 0) {
         pick(matches[activeIndex]);
       } else {
-        setOpen(false);
-        setSearch("");
+        // No row highlighted: keep what was typed instead of discarding it
+        commitTypedSearch();
       }
     }
   }
@@ -213,9 +242,10 @@ export default function ProductOptionCombobox({
           onFocus={() => { if (!customMode) openList(); }}
           onBlur={() => {
             if (customMode) return;
-            setOpen(false);
-            setActiveIndex(-1);
-            setSearch("");
+            // Keep what was typed: blur fires when the user clicks "Add Product"
+            // or moves to another field, so a typed custom entry must reach the
+            // parent form state (previously it was cleared here and never saved).
+            commitTypedSearch();
           }}
           onKeyDown={onKeyDown}
           className={cn(DEFAULT_INPUT_CLS, className)}

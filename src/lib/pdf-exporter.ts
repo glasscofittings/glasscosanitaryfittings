@@ -21,6 +21,7 @@ import type { ProductCostMarginSummary, ProductPurchase } from '@/lib/supabase/p
 import type { Quotation } from '@/lib/supabase/quotations'
 import { isTauriRuntime } from '@/lib/desktop'
 import { UR, ensureUrduFont, drawUrdu, countUrduLines, numberToUrduWords, formatUrduDate, formatUrduAmount } from '@/lib/pdf-urdu'
+import { SANS_FONT, ensureSourceSansFont, hasSourceSansFont } from '@/lib/pdf-font'
 import {
   accountUrdu,
   buildTranslatedAccountMap,
@@ -112,6 +113,57 @@ function createReportDoc(orientation: Orientation): jsPDF {
   return new jsPDF({ orientation, unit: 'mm', format: 'a4' })
 }
 
+/* ─── Typography ─────────────────────────────────────────────────────────── */
+
+/** Weight keys shared with the embedded Source Sans 3 faces (see lib/pdf-font). */
+type LatinStyle = 'light' | 'normal' | 'italic' | 'semibold' | 'bold'
+
+/** Legacy builtin faces used by documents that do not embed Source Sans 3. */
+const LEGACY_LATIN: Record<LatinStyle, [string, string]> = {
+  light: ['helvetica', 'normal'],
+  normal: ['helvetica', 'normal'],
+  italic: ['helvetica', 'italic'],
+  semibold: ['helvetica', 'bold'],
+  bold: ['helvetica', 'bold'],
+}
+
+/**
+ * Body / label text: Source Sans 3 once `ensureSourceSansFont` embedded the
+ * faces on this document, the historic helvetica fallback otherwise.
+ */
+function setLatinFont(doc: jsPDF, style: LatinStyle = 'normal'): void {
+  if (hasSourceSansFont(doc)) doc.setFont(SANS_FONT, style)
+  else doc.setFont(...LEGACY_LATIN[style])
+}
+
+/** Company title face: Source Sans 3 Bold when embedded, the legacy serif otherwise. */
+function setBrandFont(doc: jsPDF): void {
+  if (hasSourceSansFont(doc)) doc.setFont(SANS_FONT, 'bold')
+  else doc.setFont(SERIF_FONT_FAMILY_PDF, 'bold')
+}
+
+/** Numeric columns: Source Sans 3 when embedded, the legacy monospace face otherwise. */
+function setNumericFont(doc: jsPDF, bold = false): void {
+  if (hasSourceSansFont(doc)) doc.setFont(SANS_FONT, bold ? 'semibold' : 'normal')
+  else doc.setFont('courier', bold ? 'bold' : 'normal')
+}
+
+/** autoTable face: the embedded family, or undefined to keep autotable's default. */
+function tableFont(doc: jsPDF): string | undefined {
+  return hasSourceSansFont(doc) ? SANS_FONT : undefined
+}
+
+/**
+ * SemiBold for table headers / summary rows once Source Sans 3 is embedded.
+ *
+ * The union is cast down to autotable's narrower `FontStyle` input type: at
+ * runtime autotable accepts any style registered on the active family (it only
+ * falls back when the family lacks that style), so `'semibold'` is valid.
+ */
+function strongStyle(doc: jsPDF): 'bold' {
+  return (hasSourceSansFont(doc) ? 'semibold' : 'bold') as 'bold'
+}
+
 /** Draws the company logo (PNG/JPEG data URL from Settings). Returns width drawn (0 if none). */
 function drawCompanyLogo(doc: jsPDF, x: number, y: number, maxWidth: number, maxHeight: number): number {
   const dataUrl = getCompanyLogoDataUrl()
@@ -160,17 +212,17 @@ function drawReportHeader(doc: jsPDF, { title, subtitle, operatorName = 'SYSTEM_
   const logoWidth = drawCompanyLogo(doc, MARGIN, 8, 16, 16)
   const brandX = MARGIN + (logoWidth > 0 ? logoWidth + 4 : 0)
 
-  doc.setFont('times', 'bold')
+  setBrandFont(doc)
   doc.setFontSize(18)
   doc.setTextColor(...C.ink)
   doc.text(`${COMPANY_HEADER.toUpperCase()}`, brandX, 16)
 
   doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setTextColor(...C.muted)
   doc.text('Sanitary Products Distribution & Retail Management System', brandX, 21)
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(13)
   doc.setTextColor(38, 38, 38)
   doc.text(title.toUpperCase(), MARGIN, 30)
@@ -180,13 +232,13 @@ function drawReportHeader(doc: jsPDF, { title, subtitle, operatorName = 'SYSTEM_
 
   if (subtitle) {
     doc.setFontSize(9)
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setTextColor(...C.muted)
     doc.text(subtitle, MARGIN, hasUrdu && titleUr ? 39 : 35)
   }
 
   doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setTextColor(...C.slate)
   doc.text(`Generated: ${timestamp}`, pageWidth - MARGIN, 16, { align: 'right' })
   doc.text(`Operator: ${operatorName}`, pageWidth - MARGIN, 21, { align: 'right' })
@@ -210,7 +262,7 @@ function drawMinimalTopBar(doc: jsPDF, page: number, totalPages: number, meta: M
   const pageWidth = doc.internal.pageSize.getWidth()
   const hasUrdu = doc.getFontList()['Amiri'] !== undefined
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(13)
   doc.setTextColor(...C.ink)
   doc.text(resolveBrandName().toUpperCase(), MARGIN, 11)
@@ -222,7 +274,7 @@ function drawMinimalTopBar(doc: jsPDF, page: number, totalPages: number, meta: M
   doc.setLineWidth(0.3)
   doc.line(MARGIN, 14.5, pageWidth - MARGIN, 14.5)
 
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(8)
   doc.setTextColor(...C.slate)
   doc.text(
@@ -260,7 +312,7 @@ function drawReportFooter(doc: jsPDF, runningTitle?: string, variant: StyleVaria
       doc.line(MARGIN, pageHeight - 14, pageWidth - MARGIN, pageHeight - 14)
 
       doc.setFontSize(8)
-      doc.setFont('helvetica', 'normal')
+      setLatinFont(doc, 'normal')
       doc.setTextColor(...C.slate)
       doc.text(`CONFIDENTIAL - ${resolveBrandName()} Verified Record`, MARGIN, pageHeight - 9)
       doc.text(`| Page ${i} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 9, { align: 'right' })
@@ -271,10 +323,10 @@ function drawReportFooter(doc: jsPDF, runningTitle?: string, variant: StyleVaria
       doc.setFillColor(...C.crimson)
       doc.rect(0, 0, pageWidth, 2, 'F')
       doc.setFontSize(8)
-      doc.setFont('helvetica', 'bold')
+      setLatinFont(doc, 'bold')
       doc.setTextColor(...C.muted)
       doc.text(runningTitle.toUpperCase(), MARGIN, 8)
-      doc.setFont('helvetica', 'normal')
+      setLatinFont(doc, 'normal')
       doc.text(`${getExportCompanyName('GLASSCO SANITARY').toUpperCase()}`, pageWidth - MARGIN, 8, { align: 'right' })
     }
 
@@ -283,7 +335,7 @@ function drawReportFooter(doc: jsPDF, runningTitle?: string, variant: StyleVaria
     doc.line(MARGIN, pageHeight - 14, pageWidth - MARGIN, pageHeight - 14)
 
     doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setTextColor(...C.muted)
     doc.text('CONFIDENTIAL - Glassco Sanitary System Verified Record', MARGIN, pageHeight - 9)
     doc.text(`Page ${i} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 9, { align: 'right' })
@@ -297,7 +349,9 @@ function drawReportFooter(doc: jsPDF, runningTitle?: string, variant: StyleVaria
   }
 }
 
-function baseTableOptions(variant: StyleVariant = 'classic'): UserOptions {
+function baseTableOptions(doc: jsPDF, variant: StyleVariant = 'classic'): UserOptions {
+  const strong = strongStyle(doc)
+  const font = tableFont(doc)
   if (variant === 'minimal') {
     return {
       theme: 'plain',
@@ -306,7 +360,7 @@ function baseTableOptions(variant: StyleVariant = 'classic'): UserOptions {
         fillColor: C.greenTint,
         textColor: C.ink,
         fontSize: 9,
-        fontStyle: 'bold',
+        fontStyle: strong,
         halign: 'left',
       },
       bodyStyles: {
@@ -316,11 +370,12 @@ function baseTableOptions(variant: StyleVariant = 'classic'): UserOptions {
       footStyles: {
         fillColor: C.greenTint,
         textColor: C.ink,
-        fontStyle: 'bold',
+        fontStyle: strong,
         fontSize: 8.5,
       },
       margin: { left: MARGIN, right: MARGIN, bottom: FOOTER_RESERVE, top: 34 },
       styles: {
+        font,
         cellPadding: { top: 1.5, bottom: 1.5, left: 1.5, right: 1.5 },
         overflow: 'linebreak',
         lineColor: C.hairline,
@@ -335,7 +390,7 @@ function baseTableOptions(variant: StyleVariant = 'classic'): UserOptions {
       fillColor: C.ink,
       textColor: C.white,
       fontSize: 9,
-      fontStyle: 'bold',
+      fontStyle: strong,
       halign: 'left',
     },
     bodyStyles: {
@@ -347,6 +402,7 @@ function baseTableOptions(variant: StyleVariant = 'classic'): UserOptions {
     },
     margin: { left: MARGIN, right: MARGIN, bottom: FOOTER_RESERVE, top: 12 },
     styles: {
+      font,
       cellPadding: 3,
       overflow: 'linebreak',
     },
@@ -420,7 +476,7 @@ function drawSectionTitle(
     const pageWidth = doc.internal.pageSize.getWidth()
     doc.setFillColor(...C.green)
     doc.rect(MARGIN, y - 3.2, 1.2, 4.5, 'F')
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(10.5)
     doc.setTextColor(...C.ink)
     doc.text(title.toUpperCase(), MARGIN + 3.5, y)
@@ -430,7 +486,7 @@ function drawSectionTitle(
       nextY += 1
     }
     if (caption) {
-      doc.setFont('helvetica', 'normal')
+      setLatinFont(doc, 'normal')
       doc.setFontSize(8)
       doc.setTextColor(...C.muted)
       doc.text(caption, MARGIN + 3.5, nextY + 4.5)
@@ -451,7 +507,7 @@ function drawSectionTitle(
 
   doc.setFillColor(...C.crimson)
   doc.rect(MARGIN, y - 3.2, 1.2, 4.5, 'F')
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(11)
   doc.setTextColor(...C.ink)
   doc.text(title.toUpperCase(), MARGIN + 3.5, y)
@@ -461,7 +517,7 @@ function drawSectionTitle(
     nextY += 1
   }
   if (caption) {
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.muted)
     doc.text(caption, MARGIN + 3.5, nextY + 4.5)
@@ -700,7 +756,7 @@ export async function generateERPReportPDF({
   const startY = drawReportHeader(doc, { title, titleUr, subtitle, operatorName }, 'minimal')
 
   autoTable(doc, {
-    ...baseTableOptions('minimal'),
+    ...baseTableOptions(doc, 'minimal'),
     startY,
     head: [headers],
     body: rows,
@@ -839,7 +895,7 @@ export async function exportProductToPDF(
   y = drawSectionTitle(doc, y, 'Product Details', undefined, { title: UR.productName }, 'minimal')
 
   autoTable(doc, {
-    ...baseTableOptions('minimal'),
+    ...baseTableOptions(doc, 'minimal'),
     startY: y,
     head: [['Detail', 'Value']],
     body: [
@@ -887,7 +943,7 @@ export async function exportProductToPDF(
   y = getFinalY(doc) + 6
 
   y = drawSectionTitle(doc, y, 'Reorder Guidance', undefined, { title: UR.reorder }, 'minimal')
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(9)
   doc.setTextColor(...C.slate)
   const guidance =
@@ -916,7 +972,7 @@ export async function exportProductToPDF(
     doc.setDrawColor(...C.ink)
     doc.setLineWidth(0.4)
     doc.line(x, y, x + sigWidth, y)
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(9)
     doc.setTextColor(...C.ink)
     doc.text(sig.en, x + sigWidth / 2, y + 5, { align: 'center' })
@@ -924,7 +980,7 @@ export async function exportProductToPDF(
     if (hasUrdu) {
       next = drawUrdu(doc, sig.ur, x + sigWidth / 2, y + 10, { align: 'center', fontSize: 9.5, color: C.slate })
     }
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(...C.muted)
     doc.text('Signature & Date', x + sigWidth / 2, next + 3.5, { align: 'center' })
@@ -1058,7 +1114,7 @@ function drawKpiTiles(doc: jsPDF, y: number, tiles: { label: string; value: stri
     doc.setFillColor(...tile.accent)
     doc.rect(x, y, 1.2, tileHeight, 'F')
 
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(...C.muted)
     doc.text(tile.label.toUpperCase(), x + 4, y + 6)
@@ -1069,7 +1125,7 @@ function drawKpiTiles(doc: jsPDF, y: number, tiles: { label: string; value: stri
       valueY = y + 17.5
     }
 
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(13)
     doc.setTextColor(...(minimal ? C.ink : tile.accent))
     doc.text(tile.value, x + 4, valueY)
@@ -1082,7 +1138,7 @@ function drawLegend(doc: jsPDF, y: number, items: { fill: RGB; text: RGB; label:
   const hasUrdu = doc.getFontList()['Amiri'] !== undefined
   let x = MARGIN
   doc.setFontSize(7.5)
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   items.forEach((item) => {
     doc.setFillColor(...item.fill)
     doc.setDrawColor(...item.text)
@@ -1169,7 +1225,7 @@ export async function exportLabourReportPDF({
   const colStatus = registerHeaders.indexOf('Status')
 
   autoTable(doc, {
-    ...baseTableOptions('minimal'),
+    ...baseTableOptions(doc, 'minimal'),
     startY: y,
     head: [registerHeaders],
     body: registerRows,
@@ -1244,7 +1300,7 @@ export async function exportLabourReportPDF({
   for (let i = 1; i <= 3; i++) calendarColumnStyles[daysInMonth + i] = { cellWidth: totalsWidth, halign: 'center', fontStyle: 'bold' }
 
   autoTable(doc, {
-    ...baseTableOptions('minimal'),
+    ...baseTableOptions(doc, 'minimal'),
     startY: y,
     theme: 'grid',
     head: [calendarHeaders],
@@ -1277,7 +1333,7 @@ export async function exportLabourReportPDF({
           const col = data.column.index
           if (data.section !== 'head' || col < 1 || col > daysInMonth) return
           const label = dayLabels[col - 1]
-          doc.setFont('helvetica', weekendDays.has(col) ? 'normal' : 'bold')
+          setLatinFont(doc, weekendDays.has(col) ? 'normal' : 'bold')
           doc.setFontSize(6)
           doc.setTextColor(...C.ink)
           // Rotated 90° the text runs bottom-to-top; nudge x right by half the cap height to centre the glyphs.
@@ -1321,7 +1377,7 @@ export async function exportLabourReportPDF({
   ])
 
   autoTable(doc, {
-    ...baseTableOptions('minimal'),
+    ...baseTableOptions(doc, 'minimal'),
     startY: y,
     head: [taskHeaders],
     body: taskRows.length > 0 ? taskRows : [[{ content: 'No tasks on the board.', colSpan: taskHeaders.length, styles: { halign: 'center', textColor: C.muted } }]],
@@ -1382,7 +1438,7 @@ export async function exportLabourReportPDF({
   })
 
   autoTable(doc, {
-    ...baseTableOptions('minimal'),
+    ...baseTableOptions(doc, 'minimal'),
     startY: y,
     head: [loanHeaders],
     body: loanRows.length > 0 ? loanRows : [[{ content: 'No loans issued.', colSpan: loanHeaders.length, styles: { halign: 'center', textColor: C.muted } }]],
@@ -1444,7 +1500,7 @@ export async function exportLabourReportPDF({
             doc.setFillColor(...(ratio >= 1 ? C.green : ratio >= 0.5 ? C.blue : C.amber))
             doc.roundedRect(barX, barY, Math.max(1.5, barW * ratio), barH, 1, 1, 'F')
           }
-          doc.setFont('helvetica', 'bold')
+          setLatinFont(doc, 'bold')
           doc.setFontSize(7)
           doc.setTextColor(...C.slate)
           doc.text(`${Math.round(ratio * 100)}%`, data.cell.x + data.cell.width - padX, data.cell.y + data.cell.height / 2 + 1, { align: 'right' })
@@ -1522,7 +1578,7 @@ export async function exportWorkerPayslipPDF(
   function drawCompactSectionTitle(secTitle: string, urTitle?: string, note?: string) {
     doc.setFillColor(...C.crimson)
     doc.rect(MARGIN, y - 2.4, 1.2, 3.8, 'F')
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(9)
     doc.setTextColor(31, 41, 55)
     doc.text(secTitle.toUpperCase(), MARGIN + 2.8, y)
@@ -1531,7 +1587,7 @@ export async function exportWorkerPayslipPDF(
       drawUrdu(doc, urTitle, MARGIN + 4.5 + titleW, y + 0.5, { fontSize: 8, color: C.muted })
     }
     if (note) {
-      doc.setFont('helvetica', 'normal')
+      setLatinFont(doc, 'normal')
       doc.setFontSize(7)
       doc.setTextColor(...C.muted)
       doc.text(note, doc.internal.pageSize.getWidth() - MARGIN, y, { align: 'right' })
@@ -1710,7 +1766,7 @@ export async function exportWorkerPayslipPDF(
   doc.line(MARGIN, y + 8, MARGIN + 45, y + 8)
   doc.line(pageWidth - MARGIN - 45, y + 8, pageWidth - MARGIN, y + 8)
 
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(7.5)
   doc.setTextColor(75, 85, 99)
   doc.text('Supervisor Signature / تصدیق نگران', MARGIN, y + 12)
@@ -1858,7 +1914,7 @@ function drawBanner(
   doc.setFillColor(...accent)
   doc.rect(MARGIN, y, 1.2, height, 'F')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(10)
   doc.setTextColor(...C.ink)
   doc.text(label, MARGIN + 5, y + (urLabel ? 6.5 : 7.5))
@@ -1875,7 +1931,7 @@ function drawBanner(
     rightEdge -= chipWidth + 6
   }
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(11)
   doc.setTextColor(...accent)
   doc.text(value, rightEdge, y + height / 2 + 2, { align: 'right' })
@@ -1908,7 +1964,7 @@ function drawStatementTable(
   if (ur?.empty) bodyCellUr[emptyText] = ur.empty
 
   autoTable(doc, {
-    ...baseTableOptions(),
+    ...baseTableOptions(doc),
     startY,
     tableWidth: width,
     margin: { left: x, right: pageWidth - x - width, bottom: FOOTER_RESERVE, top: 12 },
@@ -2011,7 +2067,7 @@ function drawJournalSection(doc: jsPDF, startY: number, entries: JournalEntryWit
   sortEntries(entries).forEach((entry) => pushJournalEntryRows(journalBody, entry, journalCellUr, urduMap))
 
   autoTable(doc, {
-    ...baseTableOptions(),
+    ...baseTableOptions(doc),
     startY: y,
     head: [['Account', 'Debit', 'Credit']],
     body: journalBody.length > 0 ? journalBody : [[{ content: 'No journal entries yet.', colSpan: 3, styles: { halign: 'center', textColor: C.muted } }]],
@@ -2052,7 +2108,7 @@ function drawTrialBalanceSection(doc: jsPDF, startY: number, statements: Financi
   })
 
   autoTable(doc, {
-    ...baseTableOptions(),
+    ...baseTableOptions(doc),
     startY: y,
     head: [['Code', 'Account', 'Type', 'Debit', 'Credit']],
     body: statements.trialBalance.length > 0
@@ -2313,7 +2369,7 @@ export async function exportJournalEntryPDF({
   })
 
   autoTable(doc, {
-    ...baseTableOptions(),
+    ...baseTableOptions(doc),
     startY: y,
     head: [['Account', 'Debit', 'Credit']],
     body: lines.length > 0
@@ -2505,17 +2561,18 @@ function drawBilingualTable(doc: jsPDF, spec: BilingualTableSpec): number {
     columnStyles[i] = { cellWidth: w, halign: spec.halign?.[i] ?? 'left' }
   })
 
+  const strong = strongStyle(doc)
   autoTable(doc, {
-    ...baseTableOptions(),
+    ...baseTableOptions(doc),
     startY: spec.startY,
     theme: 'grid',
     head: spec.head ? [spec.head.map((c) => c.en)] : undefined,
     body: spec.body.map((row) => row.map((c) => c.en)),
     foot: spec.foot ? [spec.foot.map((c) => c.en)] : undefined,
-    styles: { cellPadding: CELL_PAD, overflow: 'linebreak', lineColor: C.line, lineWidth: 0.2, valign: 'top' },
-    headStyles: { fillColor: C.ink, textColor: C.white, fontSize: 9, fontStyle: 'bold', lineColor: C.ink },
+    styles: { font: tableFont(doc), cellPadding: CELL_PAD, overflow: 'linebreak', lineColor: C.line, lineWidth: 0.2, valign: 'top' },
+    headStyles: { fillColor: C.ink, textColor: C.white, fontSize: 9, fontStyle: strong, lineColor: C.ink },
     bodyStyles: { fontSize: 9, textColor: [38, 38, 38] },
-    footStyles: { fillColor: C.zebra, textColor: C.ink, fontSize: 9, fontStyle: 'bold', lineWidth: { top: 0.4 }, lineColor: C.ink },
+    footStyles: { fillColor: C.zebra, textColor: C.ink, fontSize: 9, fontStyle: strong, lineWidth: { top: 0.4 }, lineColor: C.ink },
     columnStyles,
     didParseCell: (data: CellHookData) => {
       const cell = cellFor(data.section, data.row.index, data.column.index)
@@ -2527,7 +2584,7 @@ function drawBilingualTable(doc: jsPDF, spec: BilingualTableSpec): number {
       }
       if (data.section === 'body' && spec.labelColumns?.includes(data.column.index)) {
         data.cell.styles.fillColor = C.zebra
-        data.cell.styles.fontStyle = 'bold'
+        data.cell.styles.fontStyle = strong
         data.cell.styles.textColor = C.slate
       }
     },
@@ -2661,7 +2718,7 @@ export async function exportPaymentVoucherPDF(
   doc.roundedRect(MARGIN, y, contentWidth, bannerHeight, 1.5, 1.5, 'FD')
   doc.setFillColor(...C.crimson)
   doc.rect(MARGIN, y, 1.2, bannerHeight, 'F')
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(10)
   doc.setTextColor(...C.ink)
   doc.text('Amount Paid', MARGIN + 5, y + 7.5)
@@ -2731,13 +2788,13 @@ export async function exportPaymentVoucherPDF(
     doc.setDrawColor(...C.ink)
     doc.setLineWidth(0.4)
     doc.line(x, y, x + sigWidth, y)
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(9)
     doc.setTextColor(...C.ink)
     doc.text(sig.en, x + sigWidth / 2, y + 5, { align: 'center' })
     let next = y + 5
     if (hasUrdu) next = drawUrdu(doc, sig.ur, x + sigWidth / 2, y + 10, { align: 'center', fontSize: 9.5, color: C.slate })
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(...C.muted)
     doc.text('Signature & Date', x + sigWidth / 2, next + 3.5, { align: 'center' })
@@ -2769,11 +2826,11 @@ export async function exportPayrollVoucherPDF(
 
   /* 1. Masthead — centred navy company title */
   drawCompanyLogo(doc, MARGIN, 6, 15, 15)
-  doc.setFont('times', 'bold')
+  setBrandFont(doc)
   doc.setFontSize(20)
   doc.setTextColor(...NAVY)
   doc.text(COMPANY_HEADER.toUpperCase(), pageWidth / 2, 18, { align: 'center' })
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(8)
   doc.setTextColor(...C.muted)
   doc.text('Sanitary Products Distribution & Retail Management System', pageWidth / 2, 23, { align: 'center' })
@@ -2784,7 +2841,7 @@ export async function exportPayrollVoucherPDF(
   const bannerTitle = 'PAYROLL PAYMENT VOUCHER'
   doc.setFillColor(...BLUE)
   doc.rect(MARGIN, y, contentWidth, bannerHeight, 'F')
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(11)
   doc.setTextColor(...C.white)
   if (hasUrdu) {
@@ -2880,7 +2937,7 @@ export async function exportPayrollVoucherPDF(
   doc.setDrawColor(...BLUE)
   doc.setLineWidth(0.4)
   doc.rect(boxX, y, boxWidth, 11, 'FD')
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(10)
   doc.setTextColor(...NAVY)
   doc.text('Total Disbursed', boxX + 4, y + 7)
@@ -2901,13 +2958,13 @@ export async function exportPayrollVoucherPDF(
     doc.setDrawColor(...BLUE)
     doc.setLineWidth(0.4)
     doc.line(x, y, x + sigWidth, y)
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8.5)
     doc.setTextColor(...NAVY)
     doc.text(sig.en, x + sigWidth / 2, y + 5, { align: 'center' })
     let next = y + 5
     if (hasUrdu) next = drawUrdu(doc, sig.ur, x + sigWidth / 2, y + 10, { align: 'center', fontSize: 9, color: C.slate })
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(...C.muted)
     doc.text('Signature & Date', x + sigWidth / 2, next + 3.5, { align: 'center' })
@@ -2920,11 +2977,11 @@ export async function exportPayrollVoucherPDF(
     doc.setDrawColor(...BLUE)
     doc.setLineWidth(0.3)
     doc.line(MARGIN, pageHeight - 15, pageWidth - MARGIN, pageHeight - 15)
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8)
     doc.setTextColor(...NAVY)
     doc.text(COMPANY_LEGAL_NAME.toUpperCase(), pageWidth / 2, pageHeight - 11, { align: 'center' })
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(...C.slate)
     doc.text(
@@ -2981,6 +3038,7 @@ export async function exportPartyLedgerPDF({
 }: IndividualLedgerExportInput): Promise<jsPDF> {
   const doc = createReportDoc('portrait')
   await ensureUrduFont(doc)
+  await ensureSourceSansFont(doc)
   const title = 'Individual Ledger Statement'
   const periodText = startDate || endDate
     ? `${startDate ? formatDate(startDate) : 'Inception'} to ${endDate ? formatDate(endDate) : 'Present'}`
@@ -3030,7 +3088,7 @@ export async function exportPartyLedgerPDF({
   })
 
   autoTable(doc, {
-    ...baseTableOptions(),
+    ...baseTableOptions(doc),
     startY: y,
     head: [['Date', 'Voucher #', 'Narration / Description', 'Debit (PKR)', 'Credit (PKR)', 'Balance (PKR)']],
     body: tableBody,
@@ -3074,18 +3132,18 @@ export async function exportPartyLedgerPDF({
     doc.setDrawColor(...C.ink)
     doc.setLineWidth(0.4)
     doc.line(x, y, x + sigWidth, y)
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8.5)
     doc.setTextColor(...C.ink)
     doc.text(sig.en, x + sigWidth / 2, y + 4.5, { align: 'center' })
     if (doc.getFontList()['Amiri'] !== undefined) {
       drawUrdu(doc, sig.ur, x + sigWidth / 2, y + 9.5, { align: 'center', fontSize: 7.5, color: C.slate, maxWidth: sigWidth - 4 })
-      doc.setFont('helvetica', 'normal')
+      setLatinFont(doc, 'normal')
       doc.setFontSize(7)
       doc.setTextColor(...C.muted)
       doc.text(sig.role, x + sigWidth / 2, y + 13.5, { align: 'center' })
     } else {
-      doc.setFont('helvetica', 'normal')
+      setLatinFont(doc, 'normal')
       doc.setFontSize(7)
       doc.setTextColor(...C.muted)
       doc.text(sig.role, x + sigWidth / 2, y + 8, { align: 'center' })
@@ -3104,6 +3162,7 @@ export async function exportExpensesReportPDF(
 ): Promise<jsPDF> {
   const doc = createReportDoc('landscape')
   await ensureUrduFont(doc)
+  await ensureSourceSansFont(doc)
 
   const total = expenses.reduce((a, e) => a + (e.status !== 'CANCELLED' ? Number(e.amount) : 0), 0)
   const paidCount = expenses.filter((e) => e.status === 'PAID').length
@@ -3122,7 +3181,8 @@ export async function exportExpensesReportPDF(
 
   drawBilingualTable(doc, {
     startY: y,
-    columnWidths: [32, 24, 30, 48, 24, 38, 38, 38],
+    // Columns must fit the 269mm landscape content box (297 - 2x14 margin).
+    columnWidths: [32, 24, 30, 45, 24, 38, 38, 38],
     halign: ['left', 'left', 'left', 'left', 'left', 'left', 'left', 'right'],
     head: [
       { en: 'Expense #' },
@@ -3200,7 +3260,7 @@ export async function exportExpenseVoucherPDF(
 
   // 1. Brand header — bold serif title centred in dark navy blue (#1D5298)
   const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
-  doc.setFont('times', 'bold')
+  setBrandFont(doc)
   doc.setFontSize(22)
   doc.setTextColor(...BLUE_HEADER)
   doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
@@ -3225,7 +3285,7 @@ export async function exportExpenseVoucherPDF(
     doc.setFont('Amiri', 'normal')
     doc.setFontSize(10.5)
     const urW = doc.getTextWidth(bannerTitleUr)
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(11)
     const enText = `${bannerTitleEn}  /  `
     const enW = doc.getTextWidth(enText)
@@ -3236,7 +3296,7 @@ export async function exportExpenseVoucherPDF(
       color: [255, 255, 255],
     })
   } else {
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(11)
     doc.text(bannerTitleEn, pageWidth / 2, bannerY + 5.5, { align: 'center' })
   }
@@ -3245,7 +3305,7 @@ export async function exportExpenseVoucherPDF(
   const metaY = bannerY + bannerHeight + 5 // 32mm
 
   // Left block — PAYEE / VENDOR: / وصول کنندہ:
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
   const payeeLabelEn = 'PAYEE / VENDOR: / '
@@ -3259,13 +3319,13 @@ export async function exportExpenseVoucherPDF(
 
   // Payee name — bold navy (#1D5298)
   const payeeName = expense.payee_name?.trim() || expense.party?.name?.trim() || 'Counter / General Payee'
-  doc.setFont('times', 'bold')
+  setBrandFont(doc)
   doc.setFontSize(11)
   doc.setTextColor(...BLUE_HEADER)
   doc.text(payeeName, MARGIN, metaY + 9)
 
   // Address / sub details
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
   let leftCurY = metaY + 13.5
@@ -3308,7 +3368,7 @@ export async function exportExpenseVoucherPDF(
 
   let curMetaY = metaY + 2
   for (const item of metaItems) {
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.slate)
     doc.text(item.labelEn, metaRightX, curMetaY)
@@ -3318,7 +3378,7 @@ export async function exportExpenseVoucherPDF(
         color: C.slate,
       })
     }
-    doc.setFont('courier', 'bold')
+    setNumericFont(doc, true)
     doc.setFontSize(8)
     doc.setTextColor(9, 9, 11)
     doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
@@ -3436,7 +3496,7 @@ export async function exportExpenseVoucherPDF(
   doc.setLineWidth(0.3)
   doc.rect(MARGIN, finalY, wordsBoxWidth, wordsBoxHeight, 'FD')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(7.5)
   doc.setTextColor(...BLUE_HEADER)
   const wordsLabelEn = 'AMOUNT IN WORDS / '
@@ -3448,7 +3508,7 @@ export async function exportExpenseVoucherPDF(
     })
   }
 
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(8)
   doc.setTextColor(15, 23, 42)
   const amountWords = numberToWords(expense.amount || 0)
@@ -3483,14 +3543,14 @@ export async function exportExpenseVoucherPDF(
   doc.setTextColor(...BLUE_HEADER)
   if (hasUrdu) {
     const totalEn = 'Total Amount ('
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8.5)
     doc.text(totalEn, summaryBoxX + 3, totalLabelY)
     const totalEnW = doc.getTextWidth(totalEn)
     doc.setFont('Amiri', 'normal')
     doc.setFontSize(8.5)
     const totalUrW = doc.getTextWidth('کل رقم')
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8.5)
     doc.text(')', summaryBoxX + 3 + totalEnW + totalUrW, totalLabelY)
     drawUrdu(doc, 'کل رقم', summaryBoxX + 3 + totalEnW, totalLabelY, {
@@ -3498,12 +3558,12 @@ export async function exportExpenseVoucherPDF(
       color: BLUE_HEADER,
     })
   } else {
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8.5)
     doc.text('Total Amount', summaryBoxX + 3, totalLabelY)
   }
 
-  doc.setFont('courier', 'bold')
+  setNumericFont(doc, true)
   doc.setFontSize(9.5)
   doc.setTextColor(...BLUE_HEADER)
   doc.text(formattedAmt, summaryBoxX + summaryBoxWidth - 3, totalLabelY, { align: 'right' })
@@ -3523,7 +3583,7 @@ export async function exportExpenseVoucherPDF(
 
   signatureCols.forEach((sig, i) => {
     const cx = MARGIN + sigColW * i + sigColW / 2
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8.5)
     doc.setTextColor(9, 9, 11)
     doc.text(sig.en, cx, sigY + 4.5, { align: 'center' })
@@ -3541,12 +3601,12 @@ export async function exportExpenseVoucherPDF(
     doc.setLineWidth(0.2)
     doc.line(MARGIN, pageHeight - 15, pageWidth - MARGIN, pageHeight - 15)
 
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(8)
     doc.setTextColor(24, 24, 27)
     doc.text(COMPANY_LEGAL_NAME.toUpperCase(), pageWidth / 2, pageHeight - 11, { align: 'center' })
 
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(82, 82, 82)
     const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
@@ -3643,7 +3703,7 @@ export async function exportProductPurchasesReportPDF(
 
   // 1. Company Header (Centered, bold serif)
   const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
-  doc.setFont('times', 'bold')
+  setBrandFont(doc)
   doc.setFontSize(22)
   doc.setTextColor(9, 9, 11)
   doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
@@ -3659,7 +3719,7 @@ export async function exportProductPurchasesReportPDF(
   doc.setFillColor(...BLUE_HEADER)
   doc.roundedRect(MARGIN, bannerY, contentWidth, bannerHeight, 1, 1, 'F')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(10.5)
   doc.setTextColor(255, 255, 255)
   const bannerTitleEn = 'PURCHASE ORDERS & LANDED COST REPORT'
@@ -3693,11 +3753,11 @@ export async function exportProductPurchasesReportPDF(
   const subtitleInfo = options.subtitle || `Procurement History (${purchases.length} Orders)`
 
   // Left side: Subtitle / Scope
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
   doc.text('REPORT SCOPE:', MARGIN, metaY + 3.5)
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(15, 23, 42)
   doc.text(subtitleInfo, MARGIN + 28, metaY + 3.5)
@@ -3714,11 +3774,11 @@ export async function exportProductPurchasesReportPDF(
 
   let curMetaY = metaY + 2
   for (const item of metaItems) {
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.slate)
     doc.text(item.label, metaRightX, curMetaY)
-    doc.setFont('courier', 'bold')
+    setNumericFont(doc, true)
     doc.setFontSize(8)
     doc.setTextColor(9, 9, 11)
     doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
@@ -3911,7 +3971,7 @@ export async function exportProductPurchasesReportPDF(
   doc.setLineWidth(0.3)
   doc.roundedRect(MARGIN, finalY, 110, 10, 1.5, 1.5, 'FD')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8)
   doc.setTextColor(...BLUE_HEADER)
   doc.text(
@@ -3936,12 +3996,12 @@ export async function exportProductPurchasesReportPDF(
   doc.rect(summaryBoxX, sY, summaryBoxWidth, summaryRows.length * 5.2, 'FD')
 
   for (const row of summaryRows) {
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7.5)
     doc.setTextColor(15, 23, 42)
     doc.text(row.label, summaryBoxX + 3, sY + 3.8)
 
-    doc.setFont('courier', 'bold')
+    setNumericFont(doc, true)
     doc.setFontSize(8)
     doc.setTextColor(9, 9, 11)
     doc.text(row.value, summaryBoxX + summaryBoxWidth - 3, sY + 3.8, { align: 'right' })
@@ -3955,12 +4015,12 @@ export async function exportProductPurchasesReportPDF(
   doc.setLineWidth(0.4)
   doc.rect(summaryBoxX, sY, summaryBoxWidth, grandBoxHeight, 'FD')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(...BLUE_HEADER)
   doc.text('Grand Total (Landed Cost)', summaryBoxX + 3, sY + 5)
 
-  doc.setFont('courier', 'bold')
+  setNumericFont(doc, true)
   doc.setFontSize(9)
   doc.setTextColor(...BLUE_HEADER)
   doc.text(`PKR ${Math.round(grandLandedCost).toLocaleString()}`, summaryBoxX + summaryBoxWidth - 3, sY + 5, {
@@ -3975,7 +4035,7 @@ export async function exportProductPurchasesReportPDF(
   doc.setDrawColor(15, 23, 42)
   doc.setLineWidth(0.3)
   doc.line(MARGIN, sigY, MARGIN + sigWidth, sigY)
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8)
   doc.setTextColor(9, 9, 11)
   doc.text('Prepared By', MARGIN + sigWidth / 2, sigY + 3.8, { align: 'center' })
@@ -4000,18 +4060,18 @@ export async function exportProductPurchasesReportPDF(
     doc.setLineWidth(0.2)
     doc.line(MARGIN, pageHeight - 9.5, pageWidth - MARGIN, pageHeight - 9.5)
 
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(7)
     doc.setTextColor(24, 24, 27)
     doc.text(COMPANY_LEGAL_NAME.toUpperCase(), MARGIN, pageHeight - 6.5)
 
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(6.5)
     doc.setTextColor(82, 82, 82)
     const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
     doc.text(contactLine, pageWidth / 2, pageHeight - 6.5, { align: 'center' })
 
-    doc.setFont('courier', 'normal')
+    setNumericFont(doc)
     doc.setFontSize(7)
     doc.text(`Page ${pNum} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 6.5, { align: 'right' })
   }
@@ -4042,6 +4102,7 @@ export async function exportQuotationPDF(
 ): Promise<jsPDF> {
   const doc = createReportDoc('portrait')
   await ensureUrduFont(doc)
+  await ensureSourceSansFont(doc)
   const pageWidth = doc.internal.pageSize.getWidth() // 210mm
   const pageHeight = doc.internal.pageSize.getHeight() // 297mm
   const contentWidth = pageWidth - MARGIN * 2 // 182mm
@@ -4056,7 +4117,7 @@ export async function exportQuotationPDF(
 
   // 1. Header: Company Title (Centered at top)
   const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
-  doc.setFont('times', 'bold')
+  setBrandFont(doc)
   doc.setFontSize(22)
   doc.setTextColor(9, 9, 11)
   doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
@@ -4072,7 +4133,7 @@ export async function exportQuotationPDF(
   doc.setFillColor(...BLUE_HEADER)
   doc.roundedRect(MARGIN, bannerY, contentWidth, bannerHeight, 1, 1, 'F')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(11)
   doc.setTextColor(255, 255, 255)
   const bannerTitleEn = 'QUOTATION'
@@ -4094,19 +4155,19 @@ export async function exportQuotationPDF(
   const metaY = bannerY + bannerHeight + 5
 
   // Left column: Customer details (TO / وصول کنندہ)
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
   doc.text('TO:', MARGIN, metaY + 3.5)
   if (hasUrdu) {
     drawUrdu(doc, 'وصول کنندہ', MARGIN + doc.getTextWidth('TO:  '), metaY + 3.5, { fontSize: 8.5, color: [...C.slate] as [number, number, number] })
   }
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(11)
   doc.setTextColor(9, 9, 11)
   doc.text(quotation.customer_name || 'Counter Customer', MARGIN, metaY + 9)
 
-  doc.setFont('helvetica', 'normal')
+  setLatinFont(doc, 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
   let leftCurY = metaY + 13.5
@@ -4139,11 +4200,11 @@ export async function exportQuotationPDF(
 
   let curMetaY = metaY + 2
   for (const item of metaItems) {
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(8)
     doc.setTextColor(...C.slate)
     doc.text(item.label, metaRightX, curMetaY)
-    doc.setFont('courier', 'bold')
+    setNumericFont(doc, true)
     doc.setFontSize(8)
     doc.setTextColor(9, 9, 11)
     doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
@@ -4223,6 +4284,7 @@ export async function exportQuotationPDF(
     ],
     margin: { left: MARGIN, right: MARGIN, bottom: 28 },
     styles: {
+      font: tableFont(doc),
       cellPadding: 2.5,
       overflow: 'linebreak',
       fontSize: 8,
@@ -4235,7 +4297,7 @@ export async function exportQuotationPDF(
       fillColor: BLUE_HEADER,
       textColor: [255, 255, 255],
       fontSize: 7.5,
-      fontStyle: 'bold',
+      fontStyle: strongStyle(doc),
       lineColor: BORDER_DARK,
       lineWidth: 0.2,
       halign: 'center',
@@ -4244,24 +4306,18 @@ export async function exportQuotationPDF(
       fillColor: BLUE_LIGHT_BG,
       textColor: [9, 9, 11],
       fontSize: 8,
-      fontStyle: 'bold',
+      fontStyle: strongStyle(doc),
       lineColor: BORDER_DARK,
       lineWidth: 0.2,
     },
     columnStyles,
     didParseCell: (data) => {
-      if (data.section === 'body') {
-        if ([0, 2, 4, 5, 6, 7].includes(data.column.index)) {
-          data.cell.styles.font = 'courier'
-        }
-      }
       if (data.section === 'foot') {
         if (data.column.index === 0) {
           data.cell.colSpan = 4
         }
         if (data.column.index === 7 || data.column.index === 4) {
-          data.cell.styles.font = 'courier'
-          data.cell.styles.fontStyle = 'bold'
+          data.cell.styles.fontStyle = strongStyle(doc)
         }
       }
     },
@@ -4288,12 +4344,13 @@ export async function exportQuotationPDF(
     doc.setLineWidth(0.2)
     doc.rect(MARGIN, finalY, leftBlockWidth, termsBoxHeight, 'FD')
 
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(7.5)
     doc.setTextColor(...BLUE_HEADER)
     doc.text('TERMS & NOTES:', MARGIN + 3, finalY + 4.5)
 
-    doc.setFont('helvetica', 'normal')
+    // Terms & notes print as italic accents, matching the HTML templates.
+    setLatinFont(doc, 'italic')
     doc.setFontSize(7)
     doc.setTextColor(15, 23, 42)
     let tY = finalY + 8.5
@@ -4327,12 +4384,12 @@ export async function exportQuotationPDF(
   doc.rect(summaryBoxX, sY, summaryBoxWidth, summaryRows.length * 6, 'FD')
 
   for (const r of summaryRows) {
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(15, 23, 42)
     doc.text(r.labelEn, summaryBoxX + 3, sY + 3.8)
 
-    doc.setFont('courier', 'bold')
+    setNumericFont(doc, true)
     doc.setFontSize(7.5)
     doc.setTextColor(9, 9, 11)
     doc.text(r.value, summaryBoxX + summaryBoxWidth - 3, sY + 4, { align: 'right' })
@@ -4346,7 +4403,7 @@ export async function exportQuotationPDF(
   doc.setLineWidth(0.4)
   doc.rect(summaryBoxX, sY, summaryBoxWidth, grandBoxHeight, 'FD')
 
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8.5)
   doc.setTextColor(...BLUE_HEADER)
   doc.text('Total Amount', summaryBoxX + 3, sY + 5)
@@ -4354,7 +4411,7 @@ export async function exportQuotationPDF(
     drawUrdu(doc, 'کل رقم', summaryBoxX + 3, sY + 9.8, { fontSize: 8, color: BLUE_HEADER })
   }
 
-  doc.setFont('courier', 'bold')
+  setNumericFont(doc, true)
   doc.setFontSize(10)
   doc.setTextColor(...BLUE_HEADER)
   const grandFormatted = `PKR ${grand.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -4369,7 +4426,7 @@ export async function exportQuotationPDF(
 
   // Received By (Customer) / وصول کنندہ (گاہک)
   doc.line(MARGIN, sigY, MARGIN + sigWidth, sigY)
-  doc.setFont('helvetica', 'bold')
+  setLatinFont(doc, 'bold')
   doc.setFontSize(8)
   doc.setTextColor(9, 9, 11)
   doc.text('Received By (Customer)', MARGIN + sigWidth / 2, sigY + 4, { align: 'center' })
@@ -4393,18 +4450,18 @@ export async function exportQuotationPDF(
     doc.setLineWidth(0.2)
     doc.line(MARGIN, pageHeight - 11, pageWidth - MARGIN, pageHeight - 11)
 
-    doc.setFont('helvetica', 'bold')
+    setLatinFont(doc, 'bold')
     doc.setFontSize(7.5)
     doc.setTextColor(24, 24, 27)
     doc.text(COMPANY_LEGAL_NAME.toUpperCase(), MARGIN, pageHeight - 7)
 
-    doc.setFont('helvetica', 'normal')
+    setLatinFont(doc, 'normal')
     doc.setFontSize(7)
     doc.setTextColor(82, 82, 82)
     const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
     doc.text(contactLine, pageWidth / 2, pageHeight - 7, { align: 'center' })
 
-    doc.setFont('courier', 'normal')
+    setNumericFont(doc)
     doc.setFontSize(7.5)
     doc.text(`Page ${pNum} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 7, { align: 'right' })
   }

@@ -239,7 +239,7 @@ export default function PayrollFormModal({
               Employment Type
             </label>
             <div className="grid grid-cols-2 gap-3">
-              {(["PERMANENT_SALARY", "PART_TIME_WAGE"] as const).map((t) => (
+              {(["PERMANENT_SALARY", "PART_TIME_WAGE", "DAILY_PAY"] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -255,7 +255,7 @@ export default function PayrollFormModal({
                     {EMPLOYMENT_TYPE_LABELS[t]}
                   </span>
                   <span className="text-[10px] text-muted leading-tight">
-                    {t === "PERMANENT_SALARY" ? "Fixed monthly cost" : "Variable / daily rate"}
+                    {t === "PERMANENT_SALARY" ? "Fixed monthly cost" : t === "PART_TIME_WAGE" ? "Variable / hourly rate" : "Paid per day worked"}
                   </span>
                 </button>
               ))}

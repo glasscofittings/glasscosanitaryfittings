@@ -27,7 +27,11 @@ ALTER TABLE dispatch_records ADD COLUMN IF NOT EXISTS operator_notes TEXT;
 -- effects had already run (old create/print flow) → they are completed.
 UPDATE dispatch_records SET status = 'dispatched' WHERE status IS NULL;
 
-ALTER TABLE dispatch_records ALTER COLUMN status SET DEFAULT 'pending_approval';
+-- New dispatches are auto-approved on creation; backfill any pre-migration
+-- pending_approval records so they are not left in a pending state.
+UPDATE dispatch_records SET status = 'approved' WHERE status = 'pending_approval';
+
+ALTER TABLE dispatch_records ALTER COLUMN status SET DEFAULT 'approved';
 ALTER TABLE dispatch_records ALTER COLUMN status SET NOT NULL;
 ALTER TABLE dispatch_records ALTER COLUMN dispatch_date SET DEFAULT CURRENT_DATE;
 UPDATE dispatch_records SET dispatch_date = CURRENT_DATE WHERE dispatch_date IS NULL;

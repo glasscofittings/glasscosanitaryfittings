@@ -14,6 +14,7 @@ import {
   SANITARY_SUBCATEGORY_OPTIONS,
   PRODUCT_FINISH_OPTIONS,
 } from "@/types";
+import { mergeProductOptions } from "@/lib/product-options";
 import { exportProductsToPDF, exportProductToPDF } from "@/lib/pdf-exporter";
 import EditProductModal from "@/components/modules/catalog/EditProductModal";
 import ProductOptionCombobox from "@/components/ui/ProductOptionCombobox";
@@ -98,6 +99,20 @@ export default function InventoryPage() {
     }
     return base;
   }, [searchFiltered, filterMode]);
+  // Derive dropdown options from the product list so that custom values
+  // entered via "+ Add Custom" appear in future opens without a page refresh.
+  const categoryOptions = useMemo(
+    () => mergeProductOptions(SANITARY_CATEGORY_OPTIONS, products.map((p) => p.category)),
+    [products]
+  );
+  const subcategoryOptions = useMemo(
+    () => mergeProductOptions(SANITARY_SUBCATEGORY_OPTIONS, products.map((p) => p.subcategory)),
+    [products]
+  );
+  const finishOptions = useMemo(
+    () => mergeProductOptions(PRODUCT_FINISH_OPTIONS, products.map((p) => p.finish)),
+    [products]
+  );
 
   useEscapeToClose(showAddModal, () => setShowAddModal(false));
   useEscapeToClose(!!deleteTarget, () => {
@@ -367,6 +382,9 @@ export default function InventoryPage() {
           open={showAddModal}
           onClose={() => setShowAddModal(false)}
           onCreated={() => { handleRefresh(); setShowAddModal(false); }}
+          categoryOptions={categoryOptions}
+          subcategoryOptions={subcategoryOptions}
+          finishOptions={finishOptions}
         />
       )}
 
@@ -416,10 +434,16 @@ function AddSanitaryProductModal({
   open,
   onClose,
   onCreated,
+  categoryOptions,
+  subcategoryOptions,
+  finishOptions,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
+  categoryOptions?: readonly string[];
+  subcategoryOptions?: readonly string[];
+  finishOptions?: readonly string[];
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
@@ -497,7 +521,7 @@ function AddSanitaryProductModal({
                   aria-label="Category"
                   value={category}
                   onChange={setCategory}
-                  options={SANITARY_CATEGORY_OPTIONS}
+                  options={categoryOptions ?? SANITARY_CATEGORY_OPTIONS}
                   placeholder="Bath Set Deluxe"
                 />
               </div>
@@ -508,7 +532,7 @@ function AddSanitaryProductModal({
                   aria-label="Subcategory"
                   value={subcategory}
                   onChange={setSubcategory}
-                  options={SANITARY_SUBCATEGORY_OPTIONS}
+                  options={subcategoryOptions ?? SANITARY_SUBCATEGORY_OPTIONS}
                   placeholder="Lever Set Complete"
                 />
               </div>
@@ -519,7 +543,7 @@ function AddSanitaryProductModal({
                   aria-label="Finish"
                   value={finish}
                   onChange={setFinish}
-                  options={PRODUCT_FINISH_OPTIONS}
+                  options={finishOptions ?? PRODUCT_FINISH_OPTIONS}
                   placeholder="Chrome"
                 />
               </div>

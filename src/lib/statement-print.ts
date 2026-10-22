@@ -1,7 +1,7 @@
 import { formatPKR } from "@/lib/utils/formatters";
 import { balanceSide } from "@/lib/party-statement";
 import { getExportDocumentTitle } from "@/lib/company-settings";
-import { SERIF_FONT_FAMILY_CSS } from "@/lib/branding";
+import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
 import { UR, URDU_HTML_STYLES, urSpan, urUnder } from "@/lib/pdf-urdu";
 
 /** PKR amount with the non-breaking space Rs glue so the symbol never splits from the figure. */
@@ -19,7 +19,10 @@ function moneyCell(html: string, rawLength = html.length): string {
 function balanceCell(balance: number): string {
   const side = balanceSide(balance);
   const text = `${amount(Math.abs(balance))} ${side}`;
-  return moneyCell(`${amount(Math.abs(balance))}<span class="side">${side}</span>`, text.length);
+  return moneyCell(
+    `${amount(Math.abs(balance))}<span class="side">${side}</span>`,
+    text.length,
+  );
 }
 
 /** Party/account fields the statement header needs. */
@@ -65,7 +68,11 @@ export function formatStatementDate(dateStr: string): string {
   if (!dateStr) return "—";
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 /** Escape user/company data before it is injected into print HTML. */
@@ -86,7 +93,9 @@ export function cleanStatementDescription(raw: string): string {
   const source = (raw || "").trim();
   if (!source) return "—";
 
-  const sales = source.match(/\bsales\s*invoice\s+([A-Za-z0-9][A-Za-z0-9\-/]*)/i);
+  const sales = source.match(
+    /\bsales\s*invoice\s+([A-Za-z0-9][A-Za-z0-9\-/]*)/i,
+  );
   if (sales) return `Credit Sales (${sales[1]})`;
 
   const receipt = source.match(/payment\s*received[^\[]*\[([^\]]+)\]/i);
@@ -100,7 +109,10 @@ export function cleanStatementDescription(raw: string): string {
 
   const cleaned = source
     .replace(/\b(?:JE|JV|PV|RC)-\d{8}-[A-Za-z0-9-]+/g, "")
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      "",
+    )
     .replace(/\s{2,}/g, " ")
     .replace(/[\s\-–—:,]+$/, "")
     .trim();
@@ -114,7 +126,7 @@ export function cleanStatementDescription(raw: string): string {
  */
 export function displayBillNo(voucherNo: string, narration: string): string {
   const doc = (narration || "").match(
-    /\b((?:PINV|INV|GRN|JV|PV|RV|GV|PI|CR)-[A-Za-z0-9][A-Za-z0-9\-/]*)\b/i
+    /\b((?:PINV|INV|GRN|JV|PV|RV|GV|PI|CR)-[A-Za-z0-9][A-Za-z0-9\-/]*)\b/i,
   );
   const raw = doc ? doc[1] : (voucherNo || "").trim();
   if (!raw) return "—";
@@ -131,7 +143,9 @@ function shortenBillNo(raw: string): string {
   if (parts.length >= 2) {
     const short = `${parts[0]}-${parts[parts.length - 1]}`;
     if (short.length <= BILL_NO_MAX) return short;
-    const tail = parts[parts.length - 1].slice(-(BILL_NO_MAX - parts[0].length - 1));
+    const tail = parts[parts.length - 1].slice(
+      -(BILL_NO_MAX - parts[0].length - 1),
+    );
     return `${parts[0]}-${tail}`;
   }
   return `${raw.slice(0, BILL_NO_MAX - 1)}…`;
@@ -141,7 +155,8 @@ function shortenBillNo(raw: string): string {
 export function statementTitleFor(target: StatementTarget): string {
   if (target.type !== "PARTY") return "Account Statement";
   if (target.party_type === "CUSTOMER") return "Customer Account Statement";
-  if (target.party_type === "SUPPLIER" || target.party_type === "VENDOR") return "Supplier Account Statement";
+  if (target.party_type === "SUPPLIER" || target.party_type === "VENDOR")
+    return "Supplier Account Statement";
   return "Party Account Statement";
 }
 
@@ -164,7 +179,8 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
   const statementTitle = statementTitleFor(target);
   const docTitle = getExportDocumentTitle().toUpperCase();
   const statementDate = formatStatementDate(new Date().toISOString());
-  const subtitleUr = target.party_type === "CUSTOMER" ? "بیان کھاتہ کسٹمر" : UR.accountStatement;
+  const subtitleUr =
+    target.party_type === "CUSTOMER" ? "بیان کھاتہ کسٹمر" : UR.accountStatement;
   const nameLabel =
     target.type === "ACCOUNT"
       ? "Account Name"
@@ -187,7 +203,7 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
           ${moneyCell(tx.credit > 0 ? amount(tx.credit) : "—")}
           ${balanceCell(tx.balance)}
         </tr>
-      `
+      `,
     )
     .join("");
 
@@ -210,35 +226,34 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
   <title>${escText(statementTitle)} - ${escText(target.name)}</title>
   <style>
     ${URDU_HTML_STYLES}
-    @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap;}
-    @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
+    ${SANS_FONT_FACES_CSS}
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     html, body { background: #eef1f5; }
-    body { font-family: ${SERIF_FONT_FAMILY_CSS}; color: #09090b; font-size: 11px; font-weight: 600; line-height: 1.35; }
+    body { font-family: ${SANS_FONT_FAMILY_CSS}; color: #09090b; font-size: 11px; font-weight: 400; line-height: 1.35; }
     .sheet { width: 190mm; min-height: 277mm; margin: 10mm auto; background: #fff; box-shadow: 0 6px 26px rgba(15,23,42,.15); display: flex; flex-direction: column; }
 
     /* Executive header */
-    .title { text-align: center; font-size: 30px; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; color: #09090b; line-height: 1.15; }
+    .title { text-align: center; font-size: 30px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #09090b; line-height: 1.15; }
     .title-rule { border: 0; border-top: 2px solid #1e293b; margin-top: 6px; }
-    .banner { margin-top: 6px; background: #4170b3ff; color: #fff; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 3px; page-break-inside: avoid; }
-    .banner .lbl { font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; white-space: nowrap; color: #fff; }
-    .banner .ur { font-size: 13px; letter-spacing: normal; text-transform: none; color: #fff; margin-top: 0; }
+    .banner { margin-top: 6px; background: #d8e2f4; color: #09090b; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 3px; page-break-inside: avoid; }
+    .banner .lbl { font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; white-space: nowrap; color: #09090b; }
+    .banner .ur { font-size: 13px; letter-spacing: normal; text-transform: none; color: #09090b; margin-top: 0; }
 
     /* Customer metadata grid card */
-    .meta { display: flex; gap: 8mm; margin-top: 12px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 14px 16px; page-break-inside: avoid; }
+    .meta { display: flex; gap: 8mm; margin-top: 12px; background: #d8e2f4; border: 1px solid #09090b; border-radius: 6px; padding: 14px 16px; page-break-inside: avoid; }
     .meta-col { flex: 1; min-width: 0; }
     .mrow { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 3px 0; }
-    .mlbl { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #18181b; white-space: nowrap; }
+    .mlbl { font-size: 9.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #09090b; white-space: nowrap; }
     .mlbl .ur { text-transform: none; letter-spacing: normal; font-weight: 600; font-size: 9.5px; color: #09090b; margin-top: 0; }
-    .mval { text-align: right; font-size: 11px; font-weight: 600; color: #09090b; white-space: normal; overflow-wrap: anywhere; }
-    .mval.name { font-size: 16px; font-weight: 700; line-height: 1.3; color: #09090b; }
+    .mval { text-align: right; font-size: 11px; font-weight: 400; color: #09090b; white-space: normal; overflow-wrap: anywhere; }
+    .mval.name { font-size: 16px; font-weight: 600; line-height: 1.3; color: #09090b; }
 
     /* Ledger table */
-    table.stmt { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 12px; border: 1px solid #cbd5e1; font-size: 10.5px; }
+    table.stmt { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 12px; border: 1px solid #09090b; font-size: 10.5px; }
     table.stmt th, table.stmt td { vertical-align: top; }
-    thead th { background: #4170b3ff; color: #fff; font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; padding: 7px 8px; border-bottom: 2px solid #27292bff; }
+    thead th { background: #d8e2f4; color:#09090b; font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 7px 8px; border-bottom: 2px solid #27292bff; }
     thead th + th { border-left: 2px solid #27292bff; }
-    thead th .ur { text-transform: none; letter-spacing: normal; font-size: 9.5px; font-weight: 600; color: #dbeafe; margin-top: 1px; }
+    thead th .ur { text-transform: none; letter-spacing: normal; font-size: 9.5px; font-weight: 600; color: #09090b; margin-top: 1px; }
     .h-ctr { text-align: center; }
     .h-lft { text-align: left; }
     thead th.num { text-align: right; }
@@ -248,32 +263,32 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
 
     tbody td { padding: 10px 12px; border-bottom: 2px solid #27292bff; font-size: 10.5px; color: #09090b; }
     table.stmt td + td { border-left: 2px solid #27292bff; }
-    tbody tr:nth-child(even) td { background: #f8fafc; }
-    tbody tr.opening td { background: #eef2f7; font-weight: 700; border-bottom: 1px solid #27292bff; }
-    td.ctr { padding: 10px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: "Courier New", monospace; font-size: 9px; }
+    tbody tr:nth-child(even) td { background: #d8e2f4; }
+    tbody tr.opening td { background: #d8e2f4; font-weight: 600; border-bottom: 1px solid #27292bff; }
+    td.ctr { padding: 10px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; font-size: 9px; }
     td.desc { overflow-wrap: anywhere; }
     td.desc .ur { text-align: left; font-size: 11.5px; color: #09090b; margin-top: 2px; }
-    td.num { padding: 10px 5px; text-align: right; white-space: nowrap; font-family: Arial, Helvetica, sans-serif; font-variant-numeric: tabular-nums; font-size: 9px; line-height: 1.3; color: #09090b; }
+    td.num { padding: 10px 5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 9px; line-height: 1.3; color: #09090b; }
     td.num.tight { font-size: 8px; }
     td.num.xtight { font-size: 7px; }
-    .side { font-size: 8px; font-weight: 700; color: #18181b; margin-left: 4px; }
+    .side { font-size: 8px; font-weight: 600; color: #09090b; margin-left: 4px; }
     td.empty { text-align: center; padding: 22px 8px; color: #09090b; }
     td.empty .ur { text-align: center; }
 
-    tfoot td { background: #e2e8f0; font-weight: 700; font-size: 11px; border-top: 2px solid #0f172a; color: #09090b; }
+    tfoot td { background: #d8e2f4; font-weight: 600; font-size: 11px; border-top: 2px solid #0f172a; color: #09090b; }
     tfoot td.tlabel { padding: 10px 12px; }
-    tfoot td.tlabel .ur { text-align: left; font-size: 10px; color: #18181b; }
-    tfoot td.num { font-weight: 700; }
+    tfoot td.tlabel .ur { text-align: left; font-size: 10px; color: #09090b; }
+    tfoot td.num { font-weight: 600; }
 
     /* Bottom: disclaimer + receivable / payable callout */
     .bottom { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: flex-end; gap: 10mm; page-break-inside: avoid; }
-    .note { flex: 1; min-width: 0; max-width: 95mm; font-size: 10px; font-style: italic; color: #18181b; line-height: 1.45; }
-    .callout { flex: 0 0 auto; min-width: 70mm; padding: 10px 14px; border: 1px solid #94a3b8; border-left-width: 4px; border-radius: 6px; background: #fff; }
-    .callout.dr { border-left-color: #047857; background: #f0fdf4; }
-    .callout.cr { border-left-color: #334155; background: #f1f5f9; }
-    .co-label { font-size: 9.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #18181b; }
+    .note { flex: 1; min-width: 0; max-width: 95mm; font-size: 10px; font-weight: 400; font-style: italic; color: #18181b; line-height: 1.45; }
+    .callout { flex: 0 0 auto; min-width: 70mm; padding: 10px 14px; border: 1px solid #09090b; border-left-width: 4px; border-radius: 6px; background: #fff; }
+    .callout.dr { border-left-color: #047857; background: #d8e2f4; }
+    .callout.cr { border-left-color: #334155; background: #d8e2f4; }
+    .co-label { font-size: 9.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: #18181b; }
     .co-label .ur { text-transform: none; letter-spacing: normal; font-size: 10.5px; color: #18181b; margin-top: 0; }
-    .co-amount { margin-top: 4px; font-size: 18px; font-weight: 800; color: #09090b; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .co-amount { margin-top: 4px; font-size: 18px; font-weight: 700; color: #09090b; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .co-amount .side { font-size: 11px; margin-left: 5px; color: #18181b; }
 
     tr, .meta, .bottom { page-break-inside: avoid; }

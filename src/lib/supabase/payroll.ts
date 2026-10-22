@@ -18,7 +18,7 @@ import { type Account } from "./ledger";
 // ─── Enums & Types ─────────────────────────────────────────────────────────
 
 export type PayrollType = "PRODUCTION_COGS" | "ADMIN_FIXED";
-export type EmploymentType = "PERMANENT_SALARY" | "PART_TIME_WAGE";
+export type EmploymentType = "PERMANENT_SALARY" | "PART_TIME_WAGE" | "DAILY_PAY";
 export type PayrollPaymentMethod = "CASH" | "BANK";
 
 export const PAYROLL_TYPE_LABELS: Record<PayrollType, string> = {
@@ -29,6 +29,7 @@ export const PAYROLL_TYPE_LABELS: Record<PayrollType, string> = {
 export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
   PERMANENT_SALARY: "Permanent Salary",
   PART_TIME_WAGE: "Part-Time / Daily Wage",
+  DAILY_PAY: "Daily Pay",
 };
 
 export const PAYMENT_METHOD_LABELS: Record<PayrollPaymentMethod, string> = {

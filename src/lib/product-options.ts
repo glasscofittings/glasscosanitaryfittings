@@ -12,6 +12,68 @@ export function normalizeProductOption(text: string): string {
   return text.toLowerCase().trim();
 }
 
+/**
+ * Display text for a typed option: collapse runs of whitespace and trim the
+ * ends, preserving the user's casing. Used before a custom Category /
+ * Subcategory / Finish value is stored on the product row.
+ */
+export function cleanProductOption(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Decide what a typed query commits to when the field is confirmed — blur
+ * (e.g. the user clicks "Add Product"), Enter, or "+ Add Custom".
+ *
+ * - Exact normalised match → the predefined spelling, flagged `isCustom: false`
+ *   so the stored value matches the canonical option.
+ * - Anything else → the cleaned typed text as a custom value.
+ * - Empty / whitespace-only input → `null` (nothing to commit, keep the
+ *   previous selection).
+ *
+ * This is the guard that stops a typed custom entry from being silently
+ * discarded when the user leaves the field.
+ */
+export function resolveOptionCommit(
+  typed: string,
+  options: readonly string[]
+): { value: string; isCustom: boolean } | null {
+  const cleaned = cleanProductOption(typed);
+  if (cleaned === "") return null;
+  const normalized = normalizeProductOption(cleaned);
+  const exact = options.find((option) => normalizeProductOption(option) === normalized);
+  if (exact) return { value: exact, isCustom: false };
+  return { value: cleaned, isCustom: true };
+}
+
+/**
+ * Merge the predefined option list with values already seen on products, so a
+ * custom Category / Subcategory / Finish added via "+ Add Custom" reappears in
+ * the dropdowns without a page refresh.
+ *
+ * The predefined options keep their order and come first; product values are
+ * appended in encounter order, de-duplicated case-insensitively, and
+ * null/undefined/blank values are skipped.
+ */
+export function mergeProductOptions(
+  base: readonly string[],
+  values: readonly (string | null | undefined)[]
+): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: string | null | undefined) => {
+    const cleaned = cleanProductOption(raw ?? "");
+    if (cleaned === "") return;
+    const key = normalizeProductOption(cleaned);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(cleaned);
+  };
+  base.forEach(push);
+  values.forEach(push);
+  return merged;
+}
+
 /** True when `value` exactly matches one of the predefined options (normalised). */
 export function isKnownProductOption(value: string, options: readonly string[]): boolean {
   const normalized = normalizeProductOption(value);

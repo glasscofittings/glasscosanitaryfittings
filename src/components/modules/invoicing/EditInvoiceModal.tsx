@@ -13,6 +13,11 @@ interface LineItem {
   quantity: number;
   unit_price: number;
   unit_of_measure: string;
+  /** Stored per-line discount percent (raw Disc% entered at creation). */
+  discount_percent?: number;
+  /** Stored per-line TOTAL discount in PKR (% part + fixed Rs. part) — carried
+   *  through verbatim so saving from this modal never wipes line discounts. */
+  discount_pkr?: number;
 }
 
 interface Product {
@@ -47,8 +52,10 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
           quantity: item.quantity,
           unit_price: item.unit_price_pkr,
           unit_of_measure: item.unit_of_measure || "PCS",
+          discount_percent: item.discount_percent ?? 0,
+          discount_pkr: item.discount_pkr ?? 0,
         }))
-      : [{ key: "1", product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_of_measure: "" }]
+      : [{ key: "1", product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_of_measure: "", discount_percent: 0, discount_pkr: 0 }]
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -81,7 +88,19 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
 
   const selectedCustomer = customers.find((c) => c.id === customerId);
 
-  const grossValue = items.reduce((a, item) => a + item.quantity * item.unit_price, 0);
+  // Per-line discounts are preserved on save (see toDispatchItems) — net the
+  // lines before the invoice-level discount so the saved taxable value stays
+  // correct. Stored discount_pkr is the authoritative total line discount;
+  // percent-only rows fall back to percent-of-gross.
+  const lineDiscountOf = (item: LineItem) => {
+    const gross = (item.quantity || 0) * (item.unit_price || 0);
+    const stored = item.discount_pkr || 0;
+    const disc = stored > 0 ? stored : (gross * (item.discount_percent || 0)) / 100;
+    return Math.min(gross, Math.max(0, Math.round(disc * 100) / 100));
+  };
+  const rawGrossTotal = items.reduce((a, item) => a + item.quantity * item.unit_price, 0);
+  const lineDiscountsTotal = items.reduce((a, item) => a + lineDiscountOf(item), 0);
+  const grossValue = Math.max(0, Math.round((rawGrossTotal - lineDiscountsTotal) * 100) / 100);
   const discountAmount = Math.min(
     grossValue,
     Math.max(0, Math.round((grossValue * (discountPercent / 100) + discountFlat) * 100) / 100)
@@ -114,7 +133,7 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
   function addItem() {
     setItems((prev) => [
       ...prev,
-      { key: String(Date.now()), product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_of_measure: "" },
+      { key: String(Date.now()), product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_of_measure: "", discount_percent: 0, discount_pkr: 0 },
     ]);
   }
 
@@ -128,8 +147,14 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
       product_name: item.product_name,
       quantity: item.quantity,
       unit_price_pkr: item.unit_price,
-      line_total_pkr: item.quantity * item.unit_price,
+      // Net of the line discount, matching what createInvoice persists at
+      // creation time (gross − stored line discount).
+      line_total_pkr: Math.max(0, Math.round((item.quantity * item.unit_price - lineDiscountOf(item)) * 100) / 100),
       unit_of_measure: item.unit_of_measure,
+      // Carry the stored line discounts through verbatim — updateInvoiceItems
+      // deletes + reinserts every row, so omitting them would wipe them.
+      discount_percent: item.discount_percent || 0,
+      discount_pkr: item.discount_pkr || 0,
     }));
   }
 
@@ -317,12 +342,30 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
 
             {grossValue > 0 && (
               <div className="glass-card p-4 space-y-2">
-                {discountAmount > 0 && (
+                {lineDiscountsTotal > 0 && (
                   <>
                     <div className="flex justify-between text-body">
-                      <span className="text-secondary">Sub Total</span>
+                      <span className="text-secondary">Gross Total (before line discounts)</span>
+                      <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(rawGrossTotal)}</span>
+                    </div>
+                    <div className="flex justify-between text-body">
+                      <span className="text-secondary">Line Item Discounts</span>
+                      <span className="font-mono text-num-table text-status-amber whitespace-nowrap">− {formatPKR(lineDiscountsTotal)}</span>
+                    </div>
+                    <div className="flex justify-between text-body">
+                      <span className="text-secondary">Net Line Total</span>
                       <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(grossValue)}</span>
                     </div>
+                  </>
+                )}
+                {discountAmount > 0 && (
+                  <>
+                    {lineDiscountsTotal === 0 && (
+                      <div className="flex justify-between text-body">
+                        <span className="text-secondary">Sub Total</span>
+                        <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(grossValue)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-body">
                       <span className="text-secondary">
                         Discount{discountPercent > 0 ? ` (${discountPercent}%)` : ""}

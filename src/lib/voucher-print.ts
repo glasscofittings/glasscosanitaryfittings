@@ -154,39 +154,39 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;background:#eef1f5;}
-      body{font-family:${SERIF_FONT_FAMILY_CSS};color:#4170b3ff;font-size:11px;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      body{font-family:${SERIF_FONT_FAMILY_CSS};color:#09090b;font-size:11px;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
       .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
-      .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#4170b3ff;}
+      .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #45484dff;margin:8px 0;}
-      .subtitle{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#0f172a;}
+      .subtitle{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#09090b;}
       .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;}
       .meta{display:flex;justify-content:space-between;gap:8mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
-      .party-head{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#0f172a;border-bottom:1px solid #cbd5e1;padding-bottom:5px;margin-bottom:4px;}
-      .party-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;color:#475569;}
+      .party-head{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#09090b;border-bottom:1px solid #cbd5e1;padding-bottom:5px;margin-bottom:4px;}
+      .party-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;color:#09090b;}
       .meta-l .kv{padding:2px 0;}
-      .meta-l .kv .v{font-family:${SERIF_FONT_FAMILY_CSS};font-weight:600;white-space:normal;text-align:right;color:#27292bff;word-break:break-word;}
+      .meta-l .kv .v{font-family:${SERIF_FONT_FAMILY_CSS};font-weight:600;white-space:normal;text-align:right;color:#09090b;word-break:break-word;}
       .meta-l .kv .v.name{font-size:12px;font-weight:700;}
       .meta-r{flex:0 0 auto;min-width:80mm;}
       .kv{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:1.5px 0;font-size:10.5px;page-break-inside:avoid;}
-      .kv .k{color:#475569;white-space:nowrap;}
-      .kv .v{font-weight:700;text-align:right;white-space:nowrap;font-family:'Courier New',monospace;color:#27292bff;}
+      .kv .k{color:#09090b;white-space:nowrap;}
+      .kv .v{font-weight:700;text-align:right;white-space:nowrap;font-family:'Courier New',monospace;color:#09090b;}
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:1px solid #4170b3ff;padding:5px 6px;vertical-align:middle;}
-      table.items thead th{background:#e8eef7;color:#0f172a;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
+      table.items thead th{background:#e8eef7;color:#09090b;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
       table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;}
       table.items tbody td{font-size:10.5px;}
       table.items .ctr{text-align:center;}
       table.items .num{text-align:right;white-space:nowrap;font-family:'Courier New',monospace;}
       .mono{font-family:'Courier New',monospace;}
-      .acct{font-weight:600;color:#27292bff;}
-      .desc{font-size:9.5px;color:#27292bff;margin-top:1px;}
-      .empty{text-align:center;color:#27292bff;padding:14px 6px;}
+      .acct{font-weight:600;color:#09090b;}
+      .desc{font-size:9.5px;color:#09090b;margin-top:1px;}
+      .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#EBF3FA;font-weight:700;color:#0f172a;}
+      tr.total-row td{background:#EBF3FA;font-weight:700;color:#09090b;}
       .words{margin-top:5mm;background:#e8eef7;border:1px solid #43474bff;padding:7px 12px;page-break-inside:avoid;}
       .words-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#27292bff;}
       .words-head .ur{text-transform:none;letter-spacing:normal;font-size:10.5px;}
@@ -202,7 +202,7 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
          a fresh page while any room is left (break-before: avoid), never split
          mid-block (break-inside: avoid). */
       .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
-      .signatures{display:flex;padding-top:16px;border-top:1px solid #fa330bff;page-break-inside:avoid;}
+      .signatures{display:flex;padding-top:16px;border-top:1px solid #09090b;page-break-inside:avoid;}
       .sig{flex:1;text-align:center;font-size:10.5px;font-weight:700;color:#0f172a;padding:0 6px;}
       .sig .ur{text-align:center;font-weight:400;}
       .sig-name{margin-top:7px;font-size:10px;font-weight:400;color:#334155;border-top:1px dashed #94a3b8;display:inline-block;padding-top:3px;min-width:140px;}

@@ -13,8 +13,8 @@ import {
 import {
   COMPANY_HEADER_FONT_SIZE_PX,
   COMPANY_LEGAL_NAME,
-  SERIF_FONT_FAMILY_CSS,
 } from "@/lib/branding";
+import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
 
 export interface SalesInvoiceItem {
   id: string;
@@ -1540,10 +1540,11 @@ export async function resolveInvoiceItemBrands(
 }
 
 /**
- * Per-line discount amount in PKR: a flat discount_pkr wins, otherwise
- * discount_percent of the gross line value (qty × unit price). Capped at the
- * gross line and floored at zero, so missing/legacy fields read as 0.
- * Mirrors the line math used when the invoice was created (InvoiceGenerator).
+ * Per-line discount amount in PKR for a STORED row: discount_pkr holds the
+ * authoritative TOTAL line discount (its percent part plus any fixed Rs. part
+ * were combined at entry time), otherwise fall back to discount_percent of the
+ * gross line value (qty × unit price) for legacy rows. Capped at the gross
+ * line and floored at zero, so missing/legacy fields read as 0 (never NaN).
  */
 export function calcLineDiscountAmount(item: SalesInvoiceItem): number {
   const gross = Number(item.quantity ?? 0) * Number(item.unit_price_pkr ?? 0);
@@ -1552,6 +1553,28 @@ export function calcLineDiscountAmount(item: SalesInvoiceItem): number {
       ? Number(item.discount_pkr)
       : (gross * (Number(item.discount_percent) || 0)) / 100;
   return Math.min(gross, Math.max(0, Math.round(disc * 100) / 100));
+}
+
+/**
+ * Entry-side line discount used by the invoice form (New Tax Invoice): BOTH
+ * discount kinds combine —
+ *
+ *   Line Item Discount = (qty × price × Disc% / 100) + fixed Rs. amount
+ *   Item Subtotal      = gross − Line Item Discount   (before tax)
+ *
+ * Capped at the gross line and floored at zero; missing / invalid inputs
+ * read as 0 so the result is never NaN or negative.
+ */
+export function calcEntryLineDiscount(
+  gross: number,
+  discountPercent: number | undefined,
+  fixedAmount: number | undefined,
+): number {
+  const g = Math.max(0, Number(gross) || 0);
+  const pctPart = g * ((Number(discountPercent) || 0) / 100);
+  const fixedPart = Math.max(0, Number(fixedAmount) || 0);
+  const disc = pctPart + fixedPart;
+  return Math.min(g, Math.max(0, Math.round(disc * 100) / 100));
 }
 
 export function generateInvoiceHTML(
@@ -1720,50 +1743,49 @@ export function generateInvoiceHTML(
     <title>${esc(invoice.invoice_number)}</title>
     <style>
       ${URDU_HTML_STYLES}
-      @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap;}
-      @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
+      ${SANS_FONT_FACES_CSS}
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;background:#eef1f5;}
-      body{font-family:${SERIF_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:600;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      body{font-family:${SANS_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:400;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
       .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
-      .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:900;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
+      .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #1b55a5ff;margin:8px 0;}
-      .subtitle{display:block;background:#1b55a5ff;color:#fff;font-size:13.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
-      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;color:#fff;}
+      .subtitle{display:block;background:#d8e2f4;color:#09090b;font-size:13.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
+      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;color:#09090b;}
       .meta{display:flex;justify-content:space-between;gap:10mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
-      .to{font-size:10.5px;font-weight:700;color:#09090b;}
-      .cust-name{font-size:12.5px;font-weight:700;color:#09090b;margin-top:3px;}
+      .to{font-size:10.5px;font-weight:600;color:#09090b;}
+      .cust-name{font-size:12.5px;font-weight:600;color:#09090b;margin-top:3px;}
       .cust-addr{margin-top:2px;color:#18181b;}
       .cust-contact{margin-top:2px;color:#18181b;}
       .meta-r{flex:0 0 auto;min-width:78mm;}
       .kv{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:1.5px 0;font-size:10.5px;page-break-inside:avoid;}
       .kv .k{color:#18181b;white-space:nowrap;}
-      .kv .v{font-weight:700;text-align:right;white-space:nowrap;font-family:'Courier New',monospace;color:#09090b;}
+      .kv .v{font-weight:600;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:#09090b;}
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:2px solid #3c3f42ff;padding:5px 6px;vertical-align:middle;}
-      table.items thead th{background:#1b55a5ff; color:#fff;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;color:#fff;}
+      table.items thead th{background:#d8e2f4; color:#09090b;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
+      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;color:#09090b;}
       table.items tbody td{font-size:10.5px;color:#09090b;}
       table.items .ctr{text-align:center;}
-      table.items .num{text-align:right;white-space:nowrap;font-family:'Courier New',monospace;}
-      .mono{font-family:'Courier New',monospace;}
-      .prod{font-weight:700;color:#09090b;}
+      table.items .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+      .mono{font-variant-numeric:tabular-nums;}
+      .prod{font-weight:600;color:#09090b;}
       .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#EBF3FA; font-weight:700;color:#09090b;}
+      tr.total-row td{background:#d8e2f4; font-weight:600;color:#09090b;}
       .lower{display:flex;justify-content:flex-end;margin-top:5mm;}
       /*------------------------------------------------------------- Summary Box -------------------------------------------------*/
       .summary-col{display:flex;flex-direction:column;gap:3px;width:38%;min-width:60mm;max-width:96mm;page-break-inside:avoid;}
       .summary{width:100%;border-collapse:collapse;page-break-inside:avoid;}
       .summary td{padding:4px 8px;font-size:9pt;}
-      .summary td.amt{text-align:right;font-family:'Courier New',monospace;font-weight:700;white-space:nowrap;color:#09090b;}
+      .summary td.amt{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;color:#09090b;}
       .summary tr.grand td{font-size:10pt;font-weight:700;padding-top:5px;padding-bottom:5px;color:#09090b;}
-      .summary.grand-box{border:1px solid #212121ff;background:#e5e7eb;page-break-inside:avoid;}
-      .summary.grand-box td{background:#EBF3FA;}
+      .summary.grand-box{border:1px solid #212121ff;background:#d8e2f4;page-break-inside:avoid;}
+      .summary.grand-box td{background:#d8e2f4;}
       /* Page foot = signatures + footer as one atomic block: bottom-anchored via
          the flex auto-margin (dynamic spacing - it collapses so the block snaps
          right below the totals when the page can't pin it), never orphaned onto
@@ -1771,12 +1793,12 @@ export function generateInvoiceHTML(
          mid-block (break-inside: avoid). */
       .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
       .signatures{display:flex;justify-content:space-between;gap:30px;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
-      .sig{width:46%;text-align:center;font-size:10.5px;font-weight:700;color:#09090b;}
+      .sig{width:46%;text-align:center;font-size:10.5px;font-weight:600;color:#09090b;}
       .sig .ur{text-align:center;font-weight:600;}
       /*------------------------------------------------------------- Footer -------------------------------------------------*/
       .footer{margin-top:12px;text-align:center;page-break-inside:avoid;}
-      .footer .legal{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
-      .footer .contact-line{font-size:9.5px;font-weight:600;color:#09090b;margin-top:2px;}
+      .footer .legal{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
+      .footer .contact-line{font-size:9.5px;font-weight:400;color:#09090b;margin-top:2px;}
       .footer .social-line{margin-top:1px;}
       @page{size:A4 portrait;margin:0;}
       @media print{
@@ -2011,9 +2033,10 @@ export async function createDispatchRecord(record: {
   operator_name: string;
   device_node: string;
   /**
-   * Workflow state written when the record is created. Printing defaults to
-   * 'pending_approval' (DB default); callers whose stock/ledger effects have
-   * already run pass 'dispatched' explicitly.
+   * Status at dispatch record creation. Auto-approved on creation so that
+   * the customer ledger is posted immediately and no manual "Approve"
+   * step is required in the Dispatch History interface. Callers that need a
+   * different initial state can pass `status` explicitly.
    */
   status?: DispatchStatus;
   dispatch_date?: string;
@@ -2026,6 +2049,9 @@ export async function createDispatchRecord(record: {
   const customerName =
     record.customer_name?.trim() ||
     (await fetchPartyNameById(record.customer_id));
+
+  // Auto-approved on creation — no pending/approval step needed.
+  const effectiveStatus = record.status ?? "approved";
 
   const base: Record<string, unknown> = {
     invoice_id: record.invoice_id,
@@ -2046,7 +2072,7 @@ export async function createDispatchRecord(record: {
   // when provided, and drop them on a column error so printing still works
   // against a not-yet-migrated database.
   const workflow: Record<string, unknown> = {};
-  if (record.status !== undefined) workflow.status = record.status;
+  if (effectiveStatus !== undefined) workflow.status = effectiveStatus;
   if (record.dispatch_date !== undefined)
     workflow.dispatch_date = record.dispatch_date;
   if (record.transport_details !== undefined)

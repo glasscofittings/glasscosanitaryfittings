@@ -16,6 +16,7 @@ import {
   Calendar,
   Printer,
   Pencil,
+  Clock,
 } from "lucide-react";
 import CrimsonButton from "@/components/ui/CrimsonButton";
 import GlassCard from "@/components/ui/GlassCard";
@@ -183,6 +184,13 @@ export default function PayrollPage() {
         </span>
       );
     }
+    if (type === "DAILY_PAY") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30 whitespace-nowrap">
+          <Clock className="w-2.5 h-2.5" /> Daily
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-teal-500/15 text-teal-400 border border-teal-500/30 whitespace-nowrap">
         <Users className="w-2.5 h-2.5" /> Wage
@@ -296,6 +304,7 @@ export default function PayrollPage() {
               <option value="ALL">All Types</option>
               <option value="PERMANENT_SALARY">Permanent Salary</option>
               <option value="PART_TIME_WAGE">Part-Time Wage</option>
+              <option value="DAILY_PAY">Daily Pay</option>
             </select>
             <select
               value={filterPayment}

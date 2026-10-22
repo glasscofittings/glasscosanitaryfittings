@@ -18,13 +18,16 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  categoryOptions?: readonly string[];
+  subcategoryOptions?: readonly string[];
+  finishOptions?: readonly string[];
 }
 
 const inputCls =
   "w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-body focus:border-crimson-primary focus:outline-none focus:ring-1 focus:ring-crimson-primary/50 transition-colors";
 const labelCls = "text-caption text-secondary uppercase tracking-wider font-medium block mb-2";
 
-export default function EditProductModal({ product, open, onClose, onSaved }: Props) {
+export default function EditProductModal({ product, open, onClose, onSaved, categoryOptions, subcategoryOptions, finishOptions }: Props) {
   const queryClient = useQueryClient();
 
   const [name, setName] = useState(product.name);
@@ -114,7 +117,7 @@ export default function EditProductModal({ product, open, onClose, onSaved }: Pr
                   aria-label="Category"
                   value={category}
                   onChange={setCategory}
-                  options={SANITARY_CATEGORY_OPTIONS}
+                  options={categoryOptions ?? SANITARY_CATEGORY_OPTIONS}
                   placeholder="Bath Set Deluxe"
                 />
               </div>
@@ -125,7 +128,7 @@ export default function EditProductModal({ product, open, onClose, onSaved }: Pr
                   aria-label="Subcategory"
                   value={subcategory}
                   onChange={setSubcategory}
-                  options={SANITARY_SUBCATEGORY_OPTIONS}
+                  options={subcategoryOptions ?? SANITARY_SUBCATEGORY_OPTIONS}
                   placeholder="Lever Set Complete"
                 />
               </div>
@@ -136,7 +139,7 @@ export default function EditProductModal({ product, open, onClose, onSaved }: Pr
                   aria-label="Finish"
                   value={finish}
                   onChange={setFinish}
-                  options={PRODUCT_FINISH_OPTIONS}
+                  options={finishOptions ?? PRODUCT_FINISH_OPTIONS}
                   placeholder="Chrome"
                 />
               </div>

@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { type Party, type SalesInvoice, type DispatchLineItem, createInvoice, checkDuplicateInvoice } from "@/lib/supabase/invoicing";
+import { type Party, type SalesInvoice, type DispatchLineItem, createInvoice, checkDuplicateInvoice, calcEntryLineDiscount } from "@/lib/supabase/invoicing";
 import { formatPKR } from "@/lib/utils/formatters";
 import ProductCombobox, { type ProductOption } from "./ProductCombobox";
 import AddCustomerModal from "./AddCustomerModal";
@@ -14,7 +15,13 @@ interface LineItem {
   quantity: number;
   unit_price: number;
   unit_of_measure: string;
+  /** Line discount percentage input (Disc%), 0–100. */
   discount_percent?: number;
+  /**
+   * Fixed line discount amount in Rs. (the "Disc (Rs.)" input). Form-state
+   * only: the persisted sales_invoice_items.discount_pkr stores the COMBINED
+   * total (% part + Rs. part) so stored-row readers/print stay authoritative.
+   */
   discount_pkr?: number;
   /** Latest known stock for the picked product (display aid only). */
   stock?: number;
@@ -31,6 +38,18 @@ interface Props {
   onCustomerCreated?: (customer: Party) => void;
 }
 
+/** Screen-space anchor for the portalled customer dropdown (fixed positioning). */
+interface DropdownPos {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+}
+
+const CUSTOMER_DROPDOWN_GAP = 4;
+const CUSTOMER_DROPDOWN_MAX_H = 240;
+const CUSTOMER_DROPDOWN_FLIP_THRESHOLD = 160;
+
 export default function InvoiceGenerator({ customers, onCreated, onPost, onClose, onCustomerCreated }: Props) {
   const [customerId, setCustomerId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
@@ -39,6 +58,8 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
   const [touched, setTouched] = useState(false);
   const customerRef = useRef<HTMLDivElement>(null);
   const customerInputRef = useRef<HTMLInputElement>(null);
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<DropdownPos | null>(null);
   const [items, setItems] = useState<LineItem[]>([
     { key: "1", product_id: "", product_name: "", quantity: 1, unit_price: 0, unit_of_measure: "", discount_percent: 0, discount_pkr: 0 },
   ]);
@@ -95,15 +116,66 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
     );
   }, [customers, customerSearch]);
 
+  /**
+   * Measures the search input and anchors the portalled dropdown to its screen
+   * rect, flipping upward when the viewport bottom has no room. Fixed
+   * positioning escapes both the drawer's overflow clip and every stacking
+   * context below (glass-card backdrop blurs), which is what used to render
+   * the list behind the Tax Configuration / Discount cards.
+   */
+  function measureCustomerDropdown(): DropdownPos | null {
+    const el = customerInputRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - CUSTOMER_DROPDOWN_GAP - 8;
+    const spaceAbove = rect.top - CUSTOMER_DROPDOWN_GAP - 8;
+    const flipUp = spaceBelow < CUSTOMER_DROPDOWN_FLIP_THRESHOLD && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(96, Math.min(CUSTOMER_DROPDOWN_MAX_H, flipUp ? spaceAbove : spaceBelow));
+    return {
+      top: flipUp ? rect.top - CUSTOMER_DROPDOWN_GAP - maxHeight : rect.bottom + CUSTOMER_DROPDOWN_GAP,
+      left: rect.left,
+      width: rect.width,
+      maxHeight,
+    };
+  }
+
+  /** Opens the list with its position measured in the same batched update, so
+   *  the portal renders on the very first frame (no flicker). */
+  function openCustomerDropdown() {
+    setDropdownPos(measureCustomerDropdown());
+    setShowCustomerDropdown(true);
+    setCustomerError("");
+  }
+
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (customerRef.current && !customerRef.current.contains(e.target as Node)) {
-        setShowCustomerDropdown(false);
-      }
+      const target = e.target as Node;
+      // The list is portalled onto document.body, outside customerRef — clicks
+      // inside it must not close the dropdown before its own onClick runs.
+      if (customerRef.current?.contains(target) || customerDropdownRef.current?.contains(target)) return;
+      setShowCustomerDropdown(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Keep the portalled list glued to the input while open (drawer scroll /
+  // window resize). capture:true catches scroll events from the scrolling
+  // drawer ancestor, which never bubble.
+  useEffect(() => {
+    if (!showCustomerDropdown) {
+      setDropdownPos(null);
+      return;
+    }
+    const update = () => setDropdownPos(measureCustomerDropdown());
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [showCustomerDropdown]);
 
   function selectCustomer(customer: Party) {
     setCustomerId(customer.id);
@@ -121,13 +193,10 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
   }
 
   const lineGross = (item: LineItem) => (item.quantity || 0) * (item.unit_price || 0);
-  const lineDiscountAmount = (item: LineItem) => {
-    const gross = lineGross(item);
-    const pct = item.discount_percent || 0;
-    const flat = item.discount_pkr || 0;
-    const disc = flat > 0 ? flat : (gross * pct) / 100;
-    return Math.min(gross, Math.max(0, Math.round(disc * 100) / 100));
-  };
+  // Line discount = (qty × price × Disc% / 100) + fixed Rs. amount — both
+  // combine when set (capped at the gross line), subtracted before tax.
+  const lineDiscountAmount = (item: LineItem) =>
+    calcEntryLineDiscount(lineGross(item), item.discount_percent, item.discount_pkr);
   const lineNet = (item: LineItem) => Math.max(0, Math.round((lineGross(item) - lineDiscountAmount(item)) * 100) / 100);
 
   const rawGrossTotal = items.reduce((a, item) => a + lineGross(item), 0);
@@ -190,7 +259,10 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
       unit_price_pkr: item.unit_price,
       line_total_pkr: lineNet(item),
       unit_of_measure: item.unit_of_measure,
-      discount_percent: item.discount_percent || 0,
+      discount_percent: item.discount_percent || 0, // raw Disc% input
+      // Persist the COMBINED line discount (% part + fixed Rs. part) — the
+      // stored-row reader (calcLineDiscountAmount) and invoice print treat
+      // discount_pkr as the authoritative total line discount.
       discount_pkr: lineDiscountAmount(item),
     }));
   }
@@ -315,13 +387,9 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
           value={showCustomerDropdown ? customerSearch : selectedCustomer ? "" : customerSearch}
           onChange={(e) => {
             setCustomerSearch(e.target.value);
-            setShowCustomerDropdown(true);
-            setCustomerError("");
+            openCustomerDropdown();
           }}
-          onFocus={() => {
-            setShowCustomerDropdown(true);
-            setCustomerError("");
-          }}
+          onFocus={openCustomerDropdown}
           placeholder={selectedCustomer ? "Change customer..." : "Search by name, STRN, phone..."}
           disabled={false}
           className={`w-full h-9 px-3 rounded-lg bg-obsidian-bg border text-foreground text-body focus:outline-none focus:ring-1 focus:ring-crimson-primary/50 transition-colors ${
@@ -331,9 +399,23 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
           }`}
         />
 
-        {/* Dropdown */}
-        {showCustomerDropdown && (
-          <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg bg-obsidian-bg border border-border-default shadow-xl">
+        {/* Dropdown — portalled to document.body so it renders above the Tax
+            Configuration / Discount cards (backdrop-filter stacking contexts)
+            and is never clipped by the drawer's overflow-y-auto. Anchored to
+            the input's screen rect; z-index 100 > drawer z-[80] > overlay 60. */}
+        {showCustomerDropdown && dropdownPos && createPortal(
+          <div
+            ref={customerDropdownRef}
+            className="overflow-y-auto rounded-lg bg-obsidian-bg border border-border-default shadow-xl"
+            style={{
+              position: "fixed",
+              zIndex: 100,
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              width: dropdownPos.width,
+              maxHeight: dropdownPos.maxHeight,
+            }}
+          >
             {filteredCustomers.length > 0 ? (
               filteredCustomers.map((c) => (
                 <button
@@ -376,7 +458,8 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
                 </button>
               </div>
             )}
-          </div>
+          </div>,
+          document.body,
         )}
 
         {/* Validation error */}
@@ -504,7 +587,7 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
         <div className="space-y-2">
           {items.map((item, idx) => (
             <div key={item.key} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg bg-bg-subtle border border-border-subtle">
-              <div className="col-span-12 sm:col-span-4 min-w-0">
+              <div className="col-span-12 sm:col-span-3 min-w-0">
                 <ProductCombobox
                   products={products}
                   value={item.product_id}
@@ -538,7 +621,7 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
                   min="0"
                 />
               </div>
-              <div className="col-span-4 sm:col-span-1 min-w-0">
+              <div className="col-span-3 sm:col-span-1 min-w-0">
                 <input
                   type="number"
                   value={item.discount_percent || ""}
@@ -546,12 +629,26 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
                   className="h-8 w-full px-1 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-center focus:border-crimson-primary focus:outline-none"
                   placeholder="Disc%"
                   title="Line item discount %"
+                  aria-label="Line item discount percent"
                   min="0"
                   max="100"
                 />
               </div>
+              <div className="col-span-3 sm:col-span-1 min-w-0">
+                <input
+                  type="number"
+                  value={item.discount_pkr || ""}
+                  onChange={(e) => updateItem(idx, "discount_pkr", Math.max(0, parseFloat(e.target.value) || 0))}
+                  className="h-8 w-full px-1 rounded bg-obsidian-bg border border-border-default text-foreground font-mono text-caption text-center focus:border-crimson-primary focus:outline-none"
+                  placeholder="Rs."
+                  title="Line item discount amount (Rs.)"
+                  aria-label="Line item discount amount in rupees"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
               <span
-                className="col-span-6 sm:col-span-2 h-8 flex items-center justify-end text-caption text-muted font-mono whitespace-nowrap"
+                className="col-span-4 sm:col-span-2 h-8 flex items-center justify-end text-caption text-muted font-mono whitespace-nowrap"
                 title={item.stock !== undefined ? `${item.stock} in stock` : undefined}
               >
                 {item.quantity > 0 && item.unit_price > 0 ? formatPKR(lineNet(item)) : "—"}
@@ -569,6 +666,9 @@ export default function InvoiceGenerator({ customers, onCreated, onPost, onClose
             </div>
           ))}
         </div>
+        <p className="text-[10px] text-muted mt-2">
+          Disc% and Disc (Rs.) combine per line: Discount = (Qty × Price × Disc% ÷ 100) + Rs. amount, subtracted before tax.
+        </p>
       </div>
 
       {duplicateWarning && (
