@@ -12,6 +12,8 @@ export interface Account {
   is_liquid_funds?: boolean;
   /** Optional Urdu account name stored alongside the English one (accounts_chart.name_urdu). */
   name_urdu?: string | null;
+  /** Categorization for P&L reporting: 'COGS' vs 'OPEX'. */
+  report_group?: "COGS" | "OPEX" | null;
 }
 
 export interface JournalEntry {
@@ -111,6 +113,7 @@ export interface TrialBalanceRow {
   total_credit: number;
   /** Optional pre-translated name from accounts_chart.name_urdu. */
   name_urdu?: string | null;
+  report_group?: "COGS" | "OPEX" | null;
 }
 
 export interface PLRow {
@@ -118,6 +121,7 @@ export interface PLRow {
   account_name: string;
   amount: number;
   name_urdu?: string | null;
+  report_group?: "COGS" | "OPEX" | null;
 }
 
 export interface BalanceSheetRow {
@@ -850,7 +854,7 @@ export async function postJournalEntry(entryId: string): Promise<boolean> {
 }
 
 export function computeTrialBalance(entries: JournalEntryWithLines[]): TrialBalanceRow[] {
-  const map = new Map<string, { account_code: string; account_name: string; account_type: string; total_debit: number; total_credit: number; name_urdu?: string | null }>();
+  const map = new Map<string, { account_code: string; account_name: string; account_type: string; total_debit: number; total_credit: number; name_urdu?: string | null; report_group?: "COGS" | "OPEX" | null }>();
 
   entries.forEach((e) => {
     e.journal_lines?.forEach((line) => {
@@ -858,7 +862,15 @@ export function computeTrialBalance(entries: JournalEntryWithLines[]): TrialBala
       if (!acc) return;
       const key = acc.account_code;
       if (!map.has(key)) {
-        map.set(key, { account_code: acc.account_code, account_name: acc.account_name, account_type: acc.account_type, total_debit: 0, total_credit: 0, name_urdu: acc.name_urdu ?? null });
+        map.set(key, {
+          account_code: acc.account_code,
+          account_name: acc.account_name,
+          account_type: acc.account_type,
+          total_debit: 0,
+          total_credit: 0,
+          name_urdu: acc.name_urdu ?? null,
+          report_group: acc.report_group ?? null,
+        });
       }
       const row = map.get(key)!;
       row.total_debit += line.debit_pkr;
@@ -869,16 +881,60 @@ export function computeTrialBalance(entries: JournalEntryWithLines[]): TrialBala
   return Array.from(map.values()).sort((a, b) => a.account_code.localeCompare(b.account_code));
 }
 
-export function computePL(rows: TrialBalanceRow[]): { revenue: PLRow[]; expenses: PLRow[]; netProfit: number } {
+export interface PLStatement {
+  revenue: PLRow[];
+  cogs: PLRow[];
+  operatingExpenses: PLRow[];
+  /** Legacy expenses array kept for backward compatibility with existing code */
+  expenses: PLRow[];
+  totalRevenue: number;
+  totalCOGS: number;
+  grossProfit: number;
+  totalOperatingExpenses: number;
+  netProfit: number;
+}
+
+export function computePL(rows: TrialBalanceRow[]): PLStatement {
   const revenue = rows
     .filter((r) => r.account_type === "REVENUE")
-    .map((r) => ({ account_code: r.account_code, account_name: r.account_name, amount: r.total_credit - r.total_debit, name_urdu: r.name_urdu ?? null }));
-  const expenses = rows
+    .map((r) => ({
+      account_code: r.account_code,
+      account_name: r.account_name,
+      amount: r.total_credit - r.total_debit,
+      name_urdu: r.name_urdu ?? null,
+      report_group: null,
+    }));
+
+  const allExpenses = rows
     .filter((r) => r.account_type === "EXPENSE")
-    .map((r) => ({ account_code: r.account_code, account_name: r.account_name, amount: r.total_debit - r.total_credit, name_urdu: r.name_urdu ?? null }));
+    .map((r) => ({
+      account_code: r.account_code,
+      account_name: r.account_name,
+      amount: r.total_debit - r.total_credit,
+      name_urdu: r.name_urdu ?? null,
+      report_group: r.report_group ?? (["5001", "5006", "5010", "5011"].includes(r.account_code) ? ("COGS" as const) : ("OPEX" as const)),
+    }));
+
+  const cogs = allExpenses.filter((e) => e.report_group === "COGS");
+  const operatingExpenses = allExpenses.filter((e) => e.report_group !== "COGS");
+
   const totalRevenue = revenue.reduce((a, r) => a + r.amount, 0);
-  const totalExpenses = expenses.reduce((a, r) => a + r.amount, 0);
-  return { revenue, expenses, netProfit: totalRevenue - totalExpenses };
+  const totalCOGS = cogs.reduce((a, r) => a + r.amount, 0);
+  const grossProfit = totalRevenue - totalCOGS;
+  const totalOperatingExpenses = operatingExpenses.reduce((a, r) => a + r.amount, 0);
+  const netProfit = grossProfit - totalOperatingExpenses;
+
+  return {
+    revenue,
+    cogs,
+    operatingExpenses,
+    expenses: allExpenses,
+    totalRevenue,
+    totalCOGS,
+    grossProfit,
+    totalOperatingExpenses,
+    netProfit,
+  };
 }
 
 export function computeBalanceSheet(rows: TrialBalanceRow[]): { assets: BalanceSheetRow[]; liabilities: BalanceSheetRow[]; equity: BalanceSheetRow[] } {
@@ -896,7 +952,7 @@ export function computeBalanceSheet(rows: TrialBalanceRow[]): { assets: BalanceS
 
 export interface FinancialStatements {
   trialBalance: TrialBalanceRow[];
-  pl: { revenue: PLRow[]; expenses: PLRow[]; netProfit: number };
+  pl: PLStatement;
   balanceSheet: { assets: BalanceSheetRow[]; liabilities: BalanceSheetRow[]; equity: BalanceSheetRow[] };
   totalDebit: number;
   totalCredit: number;

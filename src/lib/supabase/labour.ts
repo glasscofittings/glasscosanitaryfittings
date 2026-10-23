@@ -9,6 +9,13 @@ export interface Worker {
   overtime_rate_pkr: number;
   joining_date: string;
   is_active: boolean;
+  employment_type?: "PERMANENT_SALARY" | "DAILY_PAY" | "PART_TIME_WAGE";
+  cost_class?: "PRODUCTION" | "ADMIN";
+  cost_center?: string;
+  default_pay_method?: "CASH" | "BANK";
+  bank_name?: string | null;
+  account_iban?: string | null;
+  cnic_no?: string | null;
 }
 
 export interface AttendanceRecord {

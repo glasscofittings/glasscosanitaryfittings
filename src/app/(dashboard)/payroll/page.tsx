@@ -5,537 +5,931 @@ import { toast } from "sonner";
 import {
   Plus,
   Search,
-  Download,
   RefreshCw,
-  Banknote,
-  Trash2,
-  Factory,
   Building2,
-  UserCheck,
-  Users,
-  Calendar,
+  Factory,
+  CheckCircle,
+  FileText,
+  DollarSign,
   Printer,
-  Pencil,
-  Clock,
+  RotateCcw,
+  AlertTriangle,
+  Play,
+  Layers,
+  Calendar,
+  Lock,
+  ChevronRight,
+  Download,
+  Users,
 } from "lucide-react";
 import CrimsonButton from "@/components/ui/CrimsonButton";
 import GlassCard from "@/components/ui/GlassCard";
 import { formatPKR } from "@/lib/utils/formatters";
 import { fetchAccounts, type Account } from "@/lib/supabase/ledger";
-import { exportPayrollVoucherPDF } from "@/lib/pdf-exporter";
 import {
-  type PayrollEntry,
-  type PayrollType,
-  type EmploymentType,
-  type PayrollPaymentMethod,
-  PAYROLL_TYPE_LABELS,
-  EMPLOYMENT_TYPE_LABELS,
-  PAYMENT_METHOD_LABELS,
-  fetchPayrollEntries,
-  calculatePayrollSummary,
-  deletePayrollEntry,
+  fetchPayrollPeriods,
+  fetchPayrollWageTypes,
+  fetchPayrollRuns,
+  createPayrollPeriod,
+  simulatePayrollRun,
+  createPayrollRunFromSimulation,
+  postPayrollRun,
+  payPayrollItems,
+  reversePayrollRun,
+  fetchPayrollPaymentLogs,
+  type PayrollPeriod,
+  type PayrollWageType,
+  type PayrollRun,
+  type PayrollPaymentLog,
+  type PayrollRunItem,
 } from "@/lib/supabase/payroll";
-import PayrollSummaryCards from "@/components/modules/payroll/PayrollSummaryCards";
-import PayrollFormModal from "@/components/modules/payroll/PayrollFormModal";
+import { exportPayrollRunSlipPDF, exportDisbursementListPDF } from "@/lib/pdf-exporter";
+import { useAuth } from "@/components/providers/AuthProvider";
 
-type DatePreset = "ALL" | "TODAY" | "THIS_MONTH" | "LAST_30_DAYS";
+type TabKey = "runs" | "simulation" | "payslips" | "disbursements" | "wage_types" | "periods";
 
-export default function PayrollPage() {
-  const [entries, setEntries] = useState<PayrollEntry[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+export default function SAPPayrollPage() {
+  const { profile } = useAuth();
+  const operatorName = profile?.device_name || profile?.email || "Accounts Dept";
+
+  const [activeTab, setActiveTab] = useState<TabKey>("runs");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editEntry, setEditEntry] = useState<PayrollEntry | null>(null);
-  const [printingId, setPrintingId] = useState<string | null>(null);
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterType, setFilterType] = useState<PayrollType | "ALL">("ALL");
-  const [filterEmployment, setFilterEmployment] = useState<EmploymentType | "ALL">("ALL");
-  const [filterPayment, setFilterPayment] = useState<PayrollPaymentMethod | "ALL">("ALL");
-  const [datePreset, setDatePreset] = useState<DatePreset>("ALL");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  // Core Master & Transaction Data
+  const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
+  const [wageTypes, setWageTypes] = useState<PayrollWageType[]>([]);
+  const [runs, setRuns] = useState<PayrollRun[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [paymentLogs, setPaymentLogs] = useState<PayrollPaymentLog[]>([]);
 
-  // Deleting
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Simulation Wizard state
+  const [simPeriodId, setSimPeriodId] = useState<string>("");
+  const [simCostClass, setSimCostClass] = useState<"ALL" | "PRODUCTION" | "ADMIN">("ALL");
+  const [simulating, setSimulating] = useState(false);
+  const [simResult, setSimResult] = useState<Awaited<ReturnType<typeof simulatePayrollRun>> | null>(null);
+
+  // Selected Run & Modals
+  const [selectedRun, setSelectedRun] = useState<PayrollRun | null>(null);
+  const [payModalRun, setPayModalRun] = useState<PayrollRun | null>(null);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK">("CASH");
+  const [paymentAccountId, setPaymentAccountId] = useState<string>("");
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+
+  // Reversal Modal
+  const [reversalRun, setReversalRun] = useState<PayrollRun | null>(null);
+  const [reversalReason, setReversalReason] = useState("");
+  const [submittingReversal, setSubmittingReversal] = useState(false);
+
+  // New Period Form Modal
+  const [periodModalOpen, setPeriodModalOpen] = useState(false);
+  const [newPeriodCode, setNewPeriodCode] = useState("");
+  const [newPeriodType, setNewPeriodType] = useState<"MONTHLY" | "WEEKLY">("MONTHLY");
+  const [newPeriodStart, setNewPeriodStart] = useState("");
+  const [newPeriodEnd, setNewPeriodEnd] = useState("");
 
   const loadData = useCallback(async () => {
     try {
-      const [accs, ents] = await Promise.all([fetchAccounts(), fetchPayrollEntries()]);
-      setAccounts(accs);
-      setEntries(ents);
+      const [pList, wtList, rList, accList, logs] = await Promise.all([
+        fetchPayrollPeriods(),
+        fetchPayrollWageTypes(),
+        fetchPayrollRuns(),
+        fetchAccounts(),
+        fetchPayrollPaymentLogs(),
+      ]);
+      setPeriods(pList);
+      setWageTypes(wtList);
+      setRuns(rList);
+      setAccounts(accList);
+      setPaymentLogs(logs);
+
+      if (pList.length > 0 && !simPeriodId) {
+        setSimPeriodId(pList[0].id);
+      }
     } catch (err) {
-      console.error("Failed to load payroll data:", err);
-      toast.error("Failed to load payroll records.");
+      console.error("Load payroll error:", err);
+      toast.error("Failed to load payroll data.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [simPeriodId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const handleDatePreset = (preset: DatePreset) => {
-    setDatePreset(preset);
-    const today = new Date().toISOString().slice(0, 10);
-    if (preset === "TODAY") {
-      setStartDate(today);
-      setEndDate(today);
-    } else if (preset === "THIS_MONTH") {
-      setStartDate(`${today.slice(0, 7)}-01`);
-      setEndDate(today);
-    } else if (preset === "LAST_30_DAYS") {
-      const d = new Date();
-      d.setDate(d.getDate() - 30);
-      setStartDate(d.toISOString().slice(0, 10));
-      setEndDate(today);
-    } else {
-      setStartDate("");
-      setEndDate("");
-    }
-  };
-
-  const filteredEntries = useMemo(() => {
-    let result = [...entries];
-    if (filterType !== "ALL") result = result.filter((e) => e.payroll_type === filterType);
-    if (filterEmployment !== "ALL")
-      result = result.filter((e) => e.employment_type === filterEmployment);
-    if (filterPayment !== "ALL") result = result.filter((e) => e.payment_method === filterPayment);
-    if (startDate) result = result.filter((e) => e.payroll_date >= startDate);
-    if (endDate) result = result.filter((e) => e.payroll_date <= endDate);
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      result = result.filter(
-        (e) =>
-          e.entry_number.toLowerCase().includes(q) ||
-          e.employee_name.toLowerCase().includes(q) ||
-          (e.notes && e.notes.toLowerCase().includes(q))
-      );
-    }
-    return result;
-  }, [entries, filterType, filterEmployment, filterPayment, startDate, endDate, searchQuery]);
-
-  const summary = useMemo(() => calculatePayrollSummary(entries), [entries]);
-
   const handleRefresh = async () => {
     setRefreshing(true);
     await loadData();
-    toast.success("Payroll records refreshed.");
+    toast.success("Payroll data synchronized.");
   };
 
-  const handleEntrySaved = (entry: PayrollEntry) => {
-    setEntries((prev) =>
-      prev.some((e) => e.id === entry.id)
-        ? prev.map((e) => (e.id === entry.id ? { ...e, ...entry } : e))
-        : [entry, ...prev]
-    );
-  };
+  // ─── Actions ─────────────────────────────────────────────────────────────
 
-  const handlePrint = async (entry: PayrollEntry) => {
-    if (printingId) return;
-    setPrintingId(entry.id);
+  const handleRunSimulation = async () => {
+    if (!simPeriodId) {
+      toast.error("Please select a payroll period.");
+      return;
+    }
+    setSimulating(true);
     try {
-      await exportPayrollVoucherPDF(entry, { operatorName: entry.operator_name ?? undefined });
-    } catch (err) {
-      console.error("Failed to print payroll voucher:", err);
-      toast.error("Failed to generate the payroll voucher PDF.");
+      const sim = await simulatePayrollRun({
+        periodId: simPeriodId,
+        costClassFilter: simCostClass === "ALL" ? null : simCostClass,
+      });
+      setSimResult(sim);
+      setActiveTab("simulation");
+      toast.success(`Simulation complete for ${sim.totals.totalWorkers} employees.`);
+    } catch (err: any) {
+      toast.error(err.message || "Simulation failed.");
     } finally {
-      setPrintingId(null);
+      setSimulating(false);
     }
   };
 
-  const handleDelete = async (entry: PayrollEntry) => {
-    if (!confirm(`Delete payroll entry ${entry.entry_number}? This will also void the journal entry.`)) return;
-    setDeletingId(entry.id);
-    const { error } = await deletePayrollEntry(entry.id);
-    setDeletingId(null);
-    if (error) {
-      toast.error(`Failed to delete: ${error}`);
-    } else {
-      setEntries((prev) => prev.filter((e) => e.id !== entry.id));
-      toast.success(`Entry ${entry.entry_number} deleted.`);
+  const handleApproveAndSaveRun = async () => {
+    if (!simResult) return;
+    try {
+      const { data, error } = await createPayrollRunFromSimulation(simResult, operatorName);
+      if (error || !data) {
+        toast.error(error || "Failed to approve payroll run.");
+        return;
+      }
+      toast.success(`Payroll Run ${data.run_no} created and approved.`);
+      setSimResult(null);
+      await loadData();
+      setActiveTab("runs");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create run.");
     }
   };
 
-  const renderTypeBadge = (type: PayrollType) => {
-    if (type === "PRODUCTION_COGS") {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30 whitespace-nowrap">
-          <Factory className="w-2.5 h-2.5" /> Production
-        </span>
+  const handlePostToAccounting = async (run: PayrollRun) => {
+    try {
+      const res = await postPayrollRun(run.id, operatorName);
+      if (!res.success) {
+        toast.error(res.error || "Failed to post payroll run.");
+        return;
+      }
+      toast.success(`Run ${run.run_no} posted to Accounting (Journal ${res.journalNumber}).`);
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Accounting posting failed.");
+    }
+  };
+
+  const handleExecutePayment = async () => {
+    if (!payModalRun || selectedItemIds.length === 0 || !paymentAccountId) {
+      toast.error("Please select employees and a liquid cash/bank account.");
+      return;
+    }
+    setSubmittingPayment(true);
+    try {
+      const res = await payPayrollItems({
+        runId: payModalRun.id,
+        itemIds: selectedItemIds,
+        paymentMethod,
+        accountId: paymentAccountId,
+        operatorName,
+      });
+      if (!res.success) {
+        toast.error(res.error || "Payment execution failed.");
+        return;
+      }
+      toast.success(`Disbursed PKR via batch ${res.batchNo}`);
+      setPayModalRun(null);
+      setSelectedItemIds([]);
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Payment execution failed.");
+    } finally {
+      setSubmittingPayment(false);
+    }
+  };
+
+  const handleExecuteReversal = async () => {
+    if (!reversalRun || !reversalReason.trim()) {
+      toast.error("Please provide a cancellation / reversal reason.");
+      return;
+    }
+    setSubmittingReversal(true);
+    try {
+      const res = await reversePayrollRun(reversalRun.id, reversalReason, operatorName);
+      if (!res.success) {
+        toast.error(res.error || "Reversal failed.");
+        return;
+      }
+      toast.success(`Run ${reversalRun.run_no} Storno reversed (Journal ${res.reversalJournalNo}).`);
+      setReversalRun(null);
+      setReversalReason("");
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Reversal failed.");
+    } finally {
+      setSubmittingReversal(false);
+    }
+  };
+
+  const handleCreatePeriod = async () => {
+    if (!newPeriodCode || !newPeriodStart || !newPeriodEnd) {
+      toast.error("All period fields are required.");
+      return;
+    }
+    try {
+      const { data, error } = await createPayrollPeriod({
+        period_code: newPeriodCode,
+        period_type: newPeriodType,
+        start_date: newPeriodStart,
+        end_date: newPeriodEnd,
+      });
+      if (error || !data) {
+        toast.error(error || "Failed to create period.");
+        return;
+      }
+      toast.success(`Period ${data.period_code} created.`);
+      setPeriodModalOpen(false);
+      setNewPeriodCode("");
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Period creation failed.");
+    }
+  };
+
+  // Print Payslip
+  const handlePrintSlip = async (item: PayrollRunItem, run: PayrollRun) => {
+    try {
+      await exportPayrollRunSlipPDF(
+        {
+          worker_name: item.worker_name,
+          cost_class: item.cost_class,
+          employment_type: item.employment_type,
+          days_in_period: item.days_in_period,
+          present_days: item.present_days,
+          absent_days: item.absent_days,
+          leave_days: item.leave_days,
+          overtime_minutes: item.overtime_minutes,
+          undertime_minutes: item.undertime_minutes,
+          gross_earnings: item.gross_earnings,
+          total_deductions: item.total_deductions,
+          net_pay: item.net_pay,
+          amount_paid: item.amount_paid,
+          status: item.status,
+          lines: item.lines?.map((l) => ({
+            wage_type_name: l.wage_type_name,
+            category: l.category,
+            amount: l.amount,
+          })),
+        },
+        { run_no: run.run_no, period_code: run.period?.period_code || "CURRENT" },
+        { operatorName }
       );
+    } catch (err) {
+      toast.error("Failed to generate payslip PDF.");
     }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30 whitespace-nowrap">
-        <Building2 className="w-2.5 h-2.5" /> Admin
-      </span>
+  };
+
+  // Export Disbursement List
+  const handleExportDisbursement = (run?: PayrollRun) => {
+    const list = (run ? run.items || [] : runs.flatMap((r) => r.items || []))
+      .filter((i) => i.amount_paid > 0)
+      .map((i) => ({
+        worker_name: i.worker_name,
+        cost_class: i.cost_class,
+        payment_method: "BANK",
+        bank_name: i.worker?.bank_name,
+        account_iban: i.worker?.account_iban,
+        amount: i.amount_paid,
+        disbursement_batch_no: run?.run_no,
+      }));
+    if (list.length === 0) {
+      toast.error("No disbursed payments to export.");
+      return;
+    }
+    exportDisbursementListPDF(list, `Disbursement Sheet - ${run?.run_no || "All Runs"}`);
+  };
+
+  // Filter liquid accounts for payment modal
+  const liquidAccounts = useMemo(() => {
+    return accounts.filter(
+      (a) => a.is_liquid_funds || a.is_default_cash || a.account_code === "1000" || a.account_code === "1002"
     );
-  };
-
-  const renderEmploymentBadge = (type: EmploymentType) => {
-    if (type === "PERMANENT_SALARY") {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/15 text-purple-400 border border-purple-500/30 whitespace-nowrap">
-          <UserCheck className="w-2.5 h-2.5" /> Salary
-        </span>
-      );
-    }
-    if (type === "DAILY_PAY") {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30 whitespace-nowrap">
-          <Clock className="w-2.5 h-2.5" /> Daily
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-teal-500/15 text-teal-400 border border-teal-500/30 whitespace-nowrap">
-        <Users className="w-2.5 h-2.5" /> Wage
-      </span>
-    );
-  };
-
-  const renderPaymentBadge = (method: PayrollPaymentMethod) => {
-    if (method === "CASH") {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
-          <Banknote className="w-2.5 h-2.5" /> Cash
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30 whitespace-nowrap">
-        <Building2 className="w-2.5 h-2.5" /> Bank
-      </span>
-    );
-  };
+  }, [accounts]);
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      {/* ─── Header ──────────────────────────────────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <Banknote className="w-6 h-6 text-crimson-primary" />
-            Payroll Management
+          <h1 className="text-h1 font-bold text-foreground tracking-tight flex items-center gap-2">
+            SAP Payroll & FI Integration
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-crimson-primary/10 text-crimson-primary font-mono font-medium">
+              HCM Engine
+            </span>
           </h1>
-          <p className="text-xs text-muted mt-0.5">
-            Cost allocation &amp; Cash/Bank reconciliation — Production COGS vs Admin Fixed Costs
+          <p className="text-caption text-muted mt-1">
+            End-to-end Payroll Runs, Gross-to-Net Calculations, COGS vs OPEX General Ledger Accruals & Disbursements
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="p-2 rounded-lg border border-border-subtle bg-surface-card text-muted hover:text-foreground hover:bg-bg-hover transition-colors"
-            title="Refresh"
+            className="h-9 px-3 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-caption font-medium transition-colors flex items-center gap-1.5"
           >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
           </button>
-
           <CrimsonButton
-            onClick={() => setFormOpen(true)}
-            className="inline-flex items-center gap-1.5"
+            onClick={() => {
+              if (periods.length === 0) {
+                toast.error("Create an active period first.");
+                return;
+              }
+              handleRunSimulation();
+            }}
+            disabled={simulating}
+            className="flex items-center gap-1.5"
           >
-            <Plus className="w-4 h-4" />
-            <span>Record Payroll</span>
+            <Play className="w-3.5 h-3.5" />
+            {simulating ? "Simulating..." : "New Payroll Run"}
           </CrimsonButton>
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
-      <PayrollSummaryCards summary={summary} />
-
-      {/* Filters Bar */}
-      <GlassCard className="p-4 space-y-3">
-        {/* Type Filter Tabs */}
-        <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-border-subtle">
-          <div className="flex items-center gap-1 overflow-x-auto flex-wrap">
-            {(
-              [
-                { key: "ALL", label: "All Entries" },
-                { key: "PRODUCTION_COGS", label: "Production (COGS)" },
-                { key: "ADMIN_FIXED", label: "Admin (Fixed)" },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setFilterType(t.key)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  filterType === t.key
-                    ? "bg-crimson-primary text-white shadow-sm"
-                    : "text-muted hover:text-foreground hover:bg-bg-hover"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <span className="text-xs text-muted font-mono">
-            {filteredEntries.length} of {entries.length} records
-          </span>
-        </div>
-
-        {/* Filter Inputs Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-          {/* Search */}
-          <div className="relative">
-            <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search by #, name, notes…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-xs rounded-lg bg-surface-subtle border border-border-subtle text-foreground focus:outline-none focus:border-crimson-primary"
-            />
-          </div>
-
-          {/* Employment + Payment filters */}
-          <div className="flex gap-2">
-            <select
-              value={filterEmployment}
-              onChange={(e) => setFilterEmployment(e.target.value as EmploymentType | "ALL")}
-              className="flex-1 px-3 py-2 text-xs rounded-lg bg-surface-subtle border border-border-subtle text-foreground focus:outline-none focus:border-crimson-primary"
+      {/* ─── Navigation Tabs ─────────────────────────────────────────────── */}
+      <div className="flex border-b border-border-default gap-2 overflow-x-auto pb-px">
+        {[
+          { key: "runs", label: "Payroll Runs", icon: Layers, count: runs.length },
+          { key: "simulation", label: "Calculation Wizard", icon: Play },
+          { key: "disbursements", label: "Disbursement Logs", icon: DollarSign, count: paymentLogs.length },
+          { key: "wage_types", label: "Wage Types (COA Mapping)", icon: FileText, count: wageTypes.length },
+          { key: "periods", label: "Payroll Periods", icon: Calendar, count: periods.length },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as TabKey)}
+              className={`h-10 px-4 flex items-center gap-2 text-caption font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+                active
+                  ? "border-crimson-primary text-crimson-primary font-semibold"
+                  : "border-transparent text-secondary hover:text-foreground"
+              }`}
             >
-              <option value="ALL">All Types</option>
-              <option value="PERMANENT_SALARY">Permanent Salary</option>
-              <option value="PART_TIME_WAGE">Part-Time Wage</option>
-              <option value="DAILY_PAY">Daily Pay</option>
-            </select>
-            <select
-              value={filterPayment}
-              onChange={(e) => setFilterPayment(e.target.value as PayrollPaymentMethod | "ALL")}
-              className="flex-1 px-3 py-2 text-xs rounded-lg bg-surface-subtle border border-border-subtle text-foreground focus:outline-none focus:border-crimson-primary"
-            >
-              <option value="ALL">Cash &amp; Bank</option>
-              <option value="CASH">Cash Only</option>
-              <option value="BANK">Bank Only</option>
-            </select>
-          </div>
+              <Icon className="w-4 h-4" />
+              {tab.label}
+              {tab.count !== undefined && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-bg-muted text-muted font-mono">
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-          {/* Date Presets */}
-          <div className="flex gap-1">
-            {(
-              [
-                { key: "ALL", label: "All Time" },
-                { key: "TODAY", label: "Today" },
-                { key: "THIS_MONTH", label: "Month" },
-              ] as const
-            ).map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => handleDatePreset(p.key)}
-                className={`flex-1 py-1 px-2 rounded text-[11px] font-medium border transition-colors ${
-                  datePreset === p.key
-                    ? "border-crimson-primary bg-crimson-primary/15 text-crimson-primary"
-                    : "border-border-subtle text-muted hover:bg-bg-hover"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+      {/* ─── TAB 1: PAYROLL RUNS ─────────────────────────────────────────── */}
+      {activeTab === "runs" && (
+        <div className="space-y-4">
+          {runs.length === 0 ? (
+            <GlassCard className="p-8 text-center text-muted">
+              <Users className="w-10 h-10 mx-auto text-muted/50 mb-2" />
+              <p className="text-body font-medium">No payroll runs recorded.</p>
+              <p className="text-caption mt-1">Click "New Payroll Run" above to simulate and approve monthly payroll.</p>
+            </GlassCard>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {runs.map((run) => {
+                const isPosted = run.status === "POSTED" || run.status === "PAID" || run.status === "PARTIALLY_PAID";
+                const isReversed = run.status === "REVERSED";
 
-          {/* Date range */}
-          <div className="flex items-center gap-1.5">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setDatePreset("ALL");
-              }}
-              className="w-1/2 px-2 py-1.5 text-[11px] rounded bg-surface-subtle border border-border-subtle text-foreground focus:outline-none focus:border-crimson-primary"
-            />
-            <span className="text-muted text-xs">to</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setDatePreset("ALL");
-              }}
-              className="w-1/2 px-2 py-1.5 text-[11px] rounded bg-surface-subtle border border-border-subtle text-foreground focus:outline-none focus:border-crimson-primary"
-            />
-          </div>
+                return (
+                  <GlassCard key={run.id} className="p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-body font-mono font-bold text-foreground">{run.run_no}</span>
+                        <span className="text-caption px-2 py-0.5 rounded bg-bg-subtle border border-border-subtle font-mono text-secondary">
+                          {run.period?.period_code || "MONTHLY"}
+                        </span>
+                        <span
+                          className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold uppercase tracking-wider ${
+                            run.status === "PAID"
+                              ? "bg-status-optimal/10 text-status-optimal border border-status-optimal/20"
+                              : run.status === "POSTED"
+                              ? "bg-blue-500/10 text-blue-500 border border-blue-500/20"
+                              : run.status === "REVERSED"
+                              ? "bg-status-alert/10 text-status-alert border border-status-alert/20"
+                              : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                          }`}
+                        >
+                          {run.status}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-muted">
+                        <span>Staff: <strong className="text-foreground">{run.total_workers}</strong></span>
+                        <span>Gross: <strong className="text-foreground">{formatPKR(run.gross_earnings)}</strong></span>
+                        <span>Deductions: <strong className="text-foreground">{formatPKR(run.total_deductions)}</strong></span>
+                        <span>Net Payable: <strong className="text-crimson-primary font-mono">{formatPKR(run.net_payable)}</strong></span>
+                        <span>Paid: <strong className="text-status-optimal font-mono">{formatPKR(run.amount_paid)}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Post to GL */}
+                      {run.status === "APPROVED" && (
+                        <CrimsonButton onClick={() => handlePostToAccounting(run)} className="h-8 text-caption">
+                          Post Accrual (GL)
+                        </CrimsonButton>
+                      )}
+
+                      {/* Pay Items */}
+                      {isPosted && run.amount_paid < run.net_payable && (
+                        <button
+                          onClick={() => {
+                            setPayModalRun(run);
+                            setSelectedItemIds((run.items || []).filter((i) => (i.net_pay - i.amount_paid) > 0).map((i) => i.id));
+                          }}
+                          className="h-8 px-3 rounded-lg bg-status-optimal text-white hover:bg-emerald-600 text-caption font-medium transition-colors flex items-center gap-1.5"
+                        >
+                          <DollarSign className="w-3.5 h-3.5" />
+                          Disburse Pay
+                        </button>
+                      )}
+
+                      {/* Disbursement Sheet Export */}
+                      <button
+                        onClick={() => handleExportDisbursement(run)}
+                        title="Download bank transfer & cash disbursement list"
+                        className="h-8 px-2.5 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-caption transition-colors flex items-center gap-1"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Disbursement PDF
+                      </button>
+
+                      {/* Storno Reversal */}
+                      {run.status === "POSTED" && run.amount_paid === 0 && (
+                        <button
+                          onClick={() => setReversalRun(run)}
+                          className="h-8 px-2.5 rounded-lg border border-status-alert/30 text-status-alert hover:bg-status-alert/10 text-caption transition-colors flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          Storno Reverse
+                        </button>
+                      )}
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </GlassCard>
+      )}
 
-      {/* Payroll Data Table */}
-      <GlassCard className="p-0 overflow-hidden">
-        {loading ? (
-          <div className="p-12 text-center text-muted">
-            <div className="w-6 h-6 border-2 border-crimson-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            <p className="text-xs">Loading payroll records…</p>
+      {/* ─── TAB 2: CALCULATION / SIMULATION WIZARD ──────────────────────── */}
+      {activeTab === "simulation" && (
+        <div className="space-y-6">
+          <GlassCard className="p-5">
+            <h3 className="text-h2 font-semibold text-foreground mb-3">Simulation Configuration</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Period</label>
+                <select
+                  value={simPeriodId}
+                  onChange={(e) => setSimPeriodId(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                >
+                  {periods.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.period_code} ({p.start_date} to {p.end_date}) [{p.status}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Cost Classification</label>
+                <select
+                  value={simCostClass}
+                  onChange={(e) => setSimCostClass(e.target.value as any)}
+                  className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                >
+                  <option value="ALL">All Factory & Admin Staff</option>
+                  <option value="PRODUCTION">Production / Direct Labour (COGS only)</option>
+                  <option value="ADMIN">Administration & Management (OPEX only)</option>
+                </select>
+              </div>
+
+              <div className="flex items-end">
+                <CrimsonButton onClick={handleRunSimulation} disabled={simulating} className="w-full h-9">
+                  {simulating ? "Re-computing..." : "Run Simulation"}
+                </CrimsonButton>
+              </div>
+            </div>
+          </GlassCard>
+
+          {simResult && (
+            <div className="space-y-4">
+              {/* Summary Tiles */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <GlassCard className="p-4">
+                  <p className="text-[10px] text-muted uppercase">Total Staff</p>
+                  <p className="text-h2 font-bold font-mono text-foreground mt-0.5">{simResult.totals.totalWorkers}</p>
+                </GlassCard>
+                <GlassCard className="p-4">
+                  <p className="text-[10px] text-muted uppercase">Gross Earnings</p>
+                  <p className="text-h2 font-bold font-mono text-foreground mt-0.5">{formatPKR(simResult.totals.grossEarnings)}</p>
+                </GlassCard>
+                <GlassCard className="p-4">
+                  <p className="text-[10px] text-muted uppercase">Direct Labour (COGS)</p>
+                  <p className="text-h2 font-bold font-mono text-amber-500 mt-0.5">{formatPKR(simResult.totals.productionCost)}</p>
+                </GlassCard>
+                <GlassCard className="p-4">
+                  <p className="text-[10px] text-muted uppercase">Net Payable</p>
+                  <p className="text-h2 font-bold font-mono text-crimson-primary mt-0.5">{formatPKR(simResult.totals.netPayable)}</p>
+                </GlassCard>
+              </div>
+
+              {/* Employee Calculation Grid */}
+              <GlassCard className="overflow-hidden">
+                <div className="p-4 border-b border-border-subtle flex justify-between items-center">
+                  <h4 className="text-body font-semibold text-foreground">Worker Simulation Register</h4>
+                  <CrimsonButton onClick={handleApproveAndSaveRun}>
+                    Approve Run ({formatPKR(simResult.totals.netPayable)})
+                  </CrimsonButton>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-caption text-left">
+                    <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
+                      <tr>
+                        <th className="p-3">Worker</th>
+                        <th className="p-3">Cost Class</th>
+                        <th className="p-3">Attendance</th>
+                        <th className="p-3 text-right">Basic</th>
+                        <th className="p-3 text-right">OT Pay</th>
+                        <th className="p-3 text-right">Gross</th>
+                        <th className="p-3 text-right">Loan Recovery</th>
+                        <th className="p-3 text-right">Net Salary</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-subtle font-mono">
+                      {simResult.items.map((it) => (
+                        <tr key={it.workerId} className="hover:bg-bg-subtle/50 transition-colors">
+                          <td className="p-3 font-sans font-medium text-foreground">{it.workerName}</td>
+                          <td className="p-3">
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${it.costClass === "PRODUCTION" ? "bg-amber-500/10 text-amber-500" : "bg-blue-500/10 text-blue-500"}`}>
+                              {it.costClass}
+                            </span>
+                          </td>
+                          <td className="p-3 text-secondary text-[11px]">
+                            P: {it.attendance.presentDays} | A: {it.attendance.absentDays} | L: {it.attendance.leaveDays}
+                          </td>
+                          <td className="p-3 text-right">{formatPKR(it.baseEarnings)}</td>
+                          <td className="p-3 text-right text-status-optimal">+{formatPKR(it.overtimePay)}</td>
+                          <td className="p-3 text-right font-bold text-foreground">{formatPKR(it.grossEarnings)}</td>
+                          <td className="p-3 text-right text-status-alert">−{formatPKR(it.loanRecoveryDeduction)}</td>
+                          <td className="p-3 text-right font-bold text-crimson-primary">{formatPKR(it.netPayable)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </GlassCard>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── TAB 3: DISBURSEMENT LOGS ─────────────────────────────────────── */}
+      {activeTab === "disbursements" && (
+        <GlassCard className="p-5">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-h2 font-semibold text-foreground">Disbursement & Bank Payment Register</h3>
+              <p className="text-caption text-muted">Audited cash and bank transactions linked to general ledger vouchers</p>
+            </div>
+            <button
+              onClick={() => handleExportDisbursement()}
+              className="h-8 px-3 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-caption flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export Full Sheet PDF
+            </button>
           </div>
-        ) : filteredEntries.length === 0 ? (
-          <div className="p-12 text-center text-muted space-y-2">
-            <Banknote className="w-10 h-10 mx-auto text-muted/40" />
-            <p className="text-sm font-medium">No payroll entries found</p>
-            <p className="text-xs text-muted max-w-sm mx-auto">
-              No records match the current filters. Click{" "}
-              <strong>Record Payroll</strong> to add the first entry.
-            </p>
+
+          {paymentLogs.length === 0 ? (
+            <p className="text-caption text-muted py-8 text-center">No payment disbursements executed yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-caption text-left">
+                <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
+                  <tr>
+                    <th className="p-3">Batch Ref</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Employee</th>
+                    <th className="p-3">Method</th>
+                    <th className="p-3">Disbursed Account</th>
+                    <th className="p-3 text-right">Amount (PKR)</th>
+                    <th className="p-3">Operator</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border-subtle font-mono">
+                  {paymentLogs.map((log) => (
+                    <tr key={log.id} className="hover:bg-bg-subtle/50 transition-colors">
+                      <td className="p-3 font-bold text-foreground">{log.disbursement_batch_no || "-"}</td>
+                      <td className="p-3 text-secondary">{log.payment_date}</td>
+                      <td className="p-3 font-sans text-foreground">{log.item?.worker_name || "-"}</td>
+                      <td className="p-3">
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${log.payment_method === "BANK" ? "bg-blue-500/10 text-blue-500" : "bg-emerald-500/10 text-emerald-500"}`}>
+                          {log.payment_method}
+                        </span>
+                      </td>
+                      <td className="p-3 font-sans text-secondary">
+                        {log.payment_account?.account_code} {log.payment_account?.account_name}
+                      </td>
+                      <td className="p-3 text-right font-bold text-status-optimal">{formatPKR(log.amount)}</td>
+                      <td className="p-3 font-sans text-muted">{log.operator_name || "System"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </GlassCard>
+      )}
+
+      {/* ─── TAB 4: WAGE TYPES ────────────────────────────────────────────── */}
+      {activeTab === "wage_types" && (
+        <GlassCard className="p-5">
+          <div className="mb-4">
+            <h3 className="text-h2 font-semibold text-foreground">SAP Wage Type Catalog</h3>
+            <p className="text-caption text-muted">Defines gross-to-net calculation logic and automated General Ledger account determination</p>
           </div>
-        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-border-subtle bg-bg-muted text-muted uppercase tracking-wider text-[10px]">
-                  <th className="py-3 px-4 font-semibold">Entry #</th>
-                  <th className="py-3 px-3 font-semibold">Date</th>
-                  <th className="py-3 px-4 font-semibold">Employee / Payee</th>
-                  <th className="py-3 px-3 font-semibold">Category</th>
-                  <th className="py-3 px-3 font-semibold">Type</th>
-                  <th className="py-3 px-3 font-semibold">Payment</th>
-                  <th className="py-3 px-3 font-semibold">Debit (Expense)</th>
-                  <th className="py-3 px-3 font-semibold">Credit (Cash/Bank)</th>
-                  <th className="py-3 px-4 font-semibold text-right">Amount (PKR)</th>
-                  <th className="py-3 px-4 font-semibold text-center">Actions</th>
+            <table className="w-full text-caption text-left">
+              <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
+                <tr>
+                  <th className="p-3">Code</th>
+                  <th className="p-3">Name</th>
+                  <th className="p-3">Category</th>
+                  <th className="p-3">Calc Type</th>
+                  <th className="p-3">Production GL (COGS)</th>
+                  <th className="p-3">Admin GL (OPEX)</th>
+                  <th className="p-3">Liability / Recovery GL</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border-subtle/50">
-                {filteredEntries.map((entry) => (
-                  <tr
-                    key={entry.id}
-                    className="hover:bg-bg-hover transition-colors group"
-                  >
-                    {/* Entry # */}
-                    <td className="py-3 px-4 font-mono font-semibold text-foreground whitespace-nowrap">
-                      {entry.entry_number}
-                    </td>
-
-                    {/* Date */}
-                    <td className="py-3 px-3 text-muted whitespace-nowrap">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {new Date(entry.payroll_date).toLocaleDateString()}
+              <tbody className="divide-y divide-border-subtle font-mono text-[12px]">
+                {wageTypes.map((wt) => (
+                  <tr key={wt.code} className="hover:bg-bg-subtle/50 transition-colors">
+                    <td className="p-3 font-bold text-foreground">{wt.code}</td>
+                    <td className="p-3 font-sans font-medium text-foreground">{wt.name}</td>
+                    <td className="p-3">
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${wt.category === "EARNING" ? "bg-status-optimal/10 text-status-optimal" : "bg-status-alert/10 text-status-alert"}`}>
+                        {wt.category}
                       </span>
                     </td>
-
-                    {/* Employee */}
-                    <td className="py-3 px-4 max-w-[200px]">
-                      <div className="font-medium text-foreground truncate" title={entry.employee_name}>
-                        {entry.employee_name}
-                      </div>
-                      {entry.notes && (
-                        <div className="text-[10px] text-muted truncate">{entry.notes}</div>
-                      )}
+                    <td className="p-3 text-muted">{wt.calc_type}</td>
+                    <td className="p-3 text-amber-500 font-sans">
+                      {accounts.find((a) => a.id === wt.gl_account_production)?.account_code || "5010/5011"}
                     </td>
-
-                    {/* Payroll Type */}
-                    <td className="py-3 px-3 whitespace-nowrap">{renderTypeBadge(entry.payroll_type)}</td>
-
-                    {/* Employment Type */}
-                    <td className="py-3 px-3 whitespace-nowrap">{renderEmploymentBadge(entry.employment_type)}</td>
-
-                    {/* Payment Method */}
-                    <td className="py-3 px-3 whitespace-nowrap">{renderPaymentBadge(entry.payment_method)}</td>
-
-                    {/* Debit Account */}
-                    <td
-                      className="py-3 px-3 text-muted truncate max-w-[140px]"
-                      title={entry.expense_account?.account_name}
-                    >
-                      {entry.expense_account
-                        ? `[${entry.expense_account.account_code}] ${entry.expense_account.account_name}`
-                        : "—"}
+                    <td className="p-3 text-blue-500 font-sans">
+                      {accounts.find((a) => a.id === wt.gl_account_admin)?.account_code || "5002"}
                     </td>
-
-                    {/* Credit Account */}
-                    <td className="py-3 px-3 text-muted truncate max-w-[140px]">
-                      {entry.payment_account
-                        ? `[${entry.payment_account.account_code}] ${entry.payment_account.account_name}`
-                        : "—"}
-                    </td>
-
-                    {/* Amount */}
-                    <td className="py-3 px-4 text-right font-mono font-bold text-foreground whitespace-nowrap">
-                      {formatPKR(entry.amount)}
-                    </td>
-
-                    {/* Actions */}
-                    <td
-                      className="py-3 px-4 text-center whitespace-nowrap"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => handlePrint(entry)}
-                          disabled={printingId === entry.id}
-                          className="p-1 rounded text-muted hover:text-blue-400 hover:bg-blue-400/10 transition-colors disabled:opacity-60"
-                          title="Print Payroll Voucher"
-                        >
-                          {printingId === entry.id ? (
-                            <span className="w-3.5 h-3.5 border border-muted border-t-transparent rounded-full animate-spin inline-block" />
-                          ) : (
-                            <Printer className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => setEditEntry(entry)}
-                          className="p-1 rounded text-muted hover:text-amber-400 hover:bg-amber-400/10 transition-colors"
-                          title="Edit Entry"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(entry)}
-                          disabled={deletingId === entry.id}
-                          className="p-1 rounded text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors"
-                          title="Delete Entry"
-                        >
-                          {deletingId === entry.id ? (
-                            <span className="w-3.5 h-3.5 border border-muted border-t-transparent rounded-full animate-spin inline-block" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      </div>
+                    <td className="p-3 text-secondary font-sans">
+                      {accounts.find((a) => a.id === wt.gl_account_liability)?.account_code || "2300"}
                     </td>
                   </tr>
                 ))}
               </tbody>
-
-              {/* Table Footer totals */}
-              {filteredEntries.length > 0 && (
-                <tfoot>
-                  <tr className="border-t-2 border-border-subtle bg-bg-muted">
-                    <td colSpan={8} className="py-3 px-4 text-xs font-semibold text-muted">
-                      Total ({filteredEntries.length} entries)
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-foreground">
-                      {formatPKR(filteredEntries.reduce((s, e) => s + e.amount, 0))}
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              )}
             </table>
           </div>
-        )}
-      </GlassCard>
+        </GlassCard>
+      )}
 
-      {/* Payroll Form Modal (create + edit) */}
-      <PayrollFormModal
-        isOpen={formOpen || editEntry !== null}
-        onClose={() => {
-          setFormOpen(false);
-          setEditEntry(null);
-        }}
-        entry={editEntry}
-        accounts={accounts}
-        onSuccess={(entry) => {
-          handleEntrySaved(entry);
-          setFormOpen(false);
-          setEditEntry(null);
-        }}
-      />
+      {/* ─── TAB 5: PAYROLL PERIODS ───────────────────────────────────────── */}
+      {activeTab === "periods" && (
+        <GlassCard className="p-5">
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-h2 font-semibold text-foreground">Payroll Period Master</h3>
+              <p className="text-caption text-muted">Configures active and locked accounting periods for payroll control</p>
+            </div>
+            <CrimsonButton onClick={() => setPeriodModalOpen(true)} className="flex items-center gap-1.5">
+              <Plus className="w-3.5 h-3.5" />
+              New Period
+            </CrimsonButton>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-caption text-left">
+              <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
+                <tr>
+                  <th className="p-3">Period Code</th>
+                  <th className="p-3">Type</th>
+                  <th className="p-3">Start Date</th>
+                  <th className="p-3">End Date</th>
+                  <th className="p-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle font-mono">
+                {periods.map((p) => (
+                  <tr key={p.id} className="hover:bg-bg-subtle/50 transition-colors">
+                    <td className="p-3 font-bold text-foreground">{p.period_code}</td>
+                    <td className="p-3 text-secondary font-sans">{p.period_type}</td>
+                    <td className="p-3 text-muted">{p.start_date}</td>
+                    <td className="p-3 text-muted">{p.end_date}</td>
+                    <td className="p-3">
+                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold ${p.status === "OPEN" ? "bg-status-optimal/10 text-status-optimal" : "bg-muted/10 text-muted"}`}>
+                        {p.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* ─── PAYMENT MODAL ────────────────────────────────────────────────── */}
+      {payModalRun && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <GlassCard className="max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-h2 font-semibold text-foreground">Disburse Payroll</h3>
+              <button onClick={() => setPayModalRun(null)} className="text-muted hover:text-foreground">✕</button>
+            </div>
+
+            <div className="p-3 bg-bg-subtle rounded-lg border border-border-subtle text-caption space-y-1">
+              <p>Run: <strong>{payModalRun.run_no}</strong> ({payModalRun.period?.period_code})</p>
+              <p>Selected Staff: <strong>{selectedItemIds.length}</strong></p>
+              <p>Total Payable: <strong className="text-crimson-primary font-mono">{formatPKR(
+                (payModalRun.items || [])
+                  .filter((i) => selectedItemIds.includes(i.id))
+                  .reduce((sum, i) => sum + (i.net_pay - i.amount_paid), 0)
+              )}</strong></p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Disbursement Method</label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value as any)}
+                  className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                >
+                  <option value="CASH">Cash in Hand</option>
+                  <option value="BANK">Bank Account / Transfer</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Payment Account</label>
+                <select
+                  value={paymentAccountId}
+                  onChange={(e) => setPaymentAccountId(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                >
+                  <option value="">Select Account...</option>
+                  {liquidAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.account_code} {a.account_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border-subtle">
+              <button
+                onClick={() => setPayModalRun(null)}
+                className="h-9 px-3 rounded-lg bg-bg-muted text-secondary hover:text-foreground text-caption"
+              >
+                Cancel
+              </button>
+              <CrimsonButton onClick={handleExecutePayment} disabled={submittingPayment || !paymentAccountId}>
+                {submittingPayment ? "Executing..." : "Confirm & Post Payment"}
+              </CrimsonButton>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* ─── STORNO REVERSAL MODAL ────────────────────────────────────────── */}
+      {reversalRun && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <GlassCard className="max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-h2 font-semibold text-status-alert flex items-center gap-1.5">
+                <AlertTriangle className="w-5 h-5" /> Storno Reversal
+              </h3>
+              <button onClick={() => setReversalRun(null)} className="text-muted hover:text-foreground">✕</button>
+            </div>
+
+            <p className="text-caption text-secondary">
+              This will create a balanced reversing journal entry (storno) restoring all general ledger balances, reversing worker loan deductions, and marking run <strong>{reversalRun.run_no}</strong> as REVERSED.
+            </p>
+
+            <div>
+              <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Reason for Reversal</label>
+              <textarea
+                value={reversalReason}
+                onChange={(e) => setReversalReason(e.target.value)}
+                rows={3}
+                placeholder="e.g., Erroneous overtime calculation, period correction..."
+                className="w-full p-2.5 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border-subtle">
+              <button
+                onClick={() => setReversalRun(null)}
+                className="h-9 px-3 rounded-lg bg-bg-muted text-secondary hover:text-foreground text-caption"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteReversal}
+                disabled={submittingReversal || !reversalReason.trim()}
+                className="h-9 px-4 rounded-lg bg-status-alert text-white hover:bg-red-700 text-caption font-semibold"
+              >
+                {submittingReversal ? "Reversing..." : "Execute Storno Reversal"}
+              </button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* ─── NEW PERIOD MODAL ─────────────────────────────────────────────── */}
+      {periodModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <GlassCard className="max-w-md w-full p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-h2 font-semibold text-foreground">Create Payroll Period</h3>
+              <button onClick={() => setPeriodModalOpen(false)} className="text-muted hover:text-foreground">✕</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Period Code</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 2026-M11"
+                  value={newPeriodCode}
+                  onChange={(e) => setNewPeriodCode(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                />
+              </div>
+
+              <div>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Type</label>
+                <select
+                  value={newPeriodType}
+                  onChange={(e) => setNewPeriodType(e.target.value as any)}
+                  className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                >
+                  <option value="MONTHLY">Monthly</option>
+                  <option value="WEEKLY">Weekly</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={newPeriodStart}
+                    onChange={(e) => setNewPeriodStart(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                  />
+                </div>
+                <div>
+                  <label className="text-caption text-secondary uppercase tracking-wider block mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={newPeriodEnd}
+                    onChange={(e) => setNewPeriodEnd(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border-subtle">
+              <button
+                onClick={() => setPeriodModalOpen(false)}
+                className="h-9 px-3 rounded-lg bg-bg-muted text-secondary hover:text-foreground text-caption"
+              >
+                Cancel
+              </button>
+              <CrimsonButton onClick={handleCreatePeriod}>Save Period</CrimsonButton>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </div>
   );
 }

@@ -1530,6 +1530,11 @@ export async function exportWorkerPayslipPDF(
 ): Promise<jsPDF> {
   const doc = createReportDoc('portrait')
   await ensureUrduFont(doc)
+  await ensureSourceSansFont(doc)
+  const pageWidth = doc.internal.pageSize.getWidth() // 210mm
+  const pageHeight = doc.internal.pageSize.getHeight() // 297mm
+  const contentWidth = pageWidth - MARGIN * 2 // 182mm
+  const profile = loadCompanyProfile()
   const monthLabel = new Date(year, month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })
   const salary = calculateEarnedSalary(worker, attendance, year, month, timeLogs)
   const loanTaken = loans.reduce((a, l) => a + l.original_loan_amount, 0)
@@ -1537,54 +1542,149 @@ export async function exportWorkerPayslipPDF(
   const paidDays = salary.presentDays + salary.leaveDays
   const hasUrdu = doc.getFontList()['Amiri'] !== undefined
 
-  const title = `Payslip - ${monthLabel}`
-  let y = drawReportHeader(doc, {
-    title,
-    titleUr: UR.payslip,
-    subtitle: `${worker.full_name} | ${worker.role_designation}`,
-    operatorName,
-  })
+  // Standard template blue tokens — identical to the invoice / quotation documents.
+  const BLUE_HEADER: RGB = [29, 82, 152] // #1D5298
+  const BLUE_LIGHT_BG: RGB = [235, 243, 250] // #EBF3FA
+  const BORDER_DARK: RGB = [60, 63, 66] // #3c3f42
 
-  // Minimalist, ink-saving table options (no solid dark black backgrounds)
+  // 1. Header: company title (centered) + thin blue rule
+  const companyName = (profile.name?.trim() || COMPANY_HEADER).toUpperCase()
+  setBrandFont(doc)
+  doc.setFontSize(22)
+  doc.setTextColor(9, 9, 11)
+  doc.text(companyName, pageWidth / 2, 14, { align: 'center' })
+
+  doc.setDrawColor(...BLUE_HEADER)
+  doc.setLineWidth(0.4)
+  doc.line(MARGIN, 17, pageWidth - MARGIN, 17)
+
+  // Sub-banner: dark blue background with white bold centered "PAYSLIP — OCTOBER 2026 / تنخواہ پرچی"
+  const bannerY = 19
+  const bannerHeight = 8
+  doc.setFillColor(...BLUE_HEADER)
+  doc.roundedRect(MARGIN, bannerY, contentWidth, bannerHeight, 1, 1, 'F')
+
+  setLatinFont(doc, 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(255, 255, 255)
+  const bannerTitleEn = `PAYSLIP — ${monthLabel.toUpperCase()}`
+  if (hasUrdu) {
+    const enW = doc.getTextWidth(bannerTitleEn + '  /  ')
+    const startX = pageWidth / 2 - (enW + 18) / 2
+    doc.text(bannerTitleEn + '  /  ', startX, bannerY + 5.5)
+    drawUrdu(doc, UR.payslip, startX + enW, bannerY + 5.5, { fontSize: 10.5, color: [255, 255, 255] })
+  } else {
+    doc.text(bannerTitleEn, pageWidth / 2, bannerY + 5.5, { align: 'center' })
+  }
+
+  // 2. Meta information: worker block (left) + payroll stamps (right)
+  const metaY = bannerY + bannerHeight + 5
+
+  // Left column: worker details (WORKER / کارکن), mirroring the invoice's TO: block
+  setLatinFont(doc, 'bold')
+  doc.setFontSize(8.5)
+  doc.setTextColor(...C.slate)
+  doc.text('WORKER:', MARGIN, metaY + 3.5)
+  if (hasUrdu) {
+    drawUrdu(doc, UR.worker, MARGIN + doc.getTextWidth('WORKER:  '), metaY + 3.5, {
+      fontSize: 8.5,
+      color: [...C.slate] as RGB,
+    })
+  }
+  setLatinFont(doc, 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(9, 9, 11)
+  doc.text(worker.full_name, MARGIN, metaY + 9)
+
+  setLatinFont(doc, 'normal')
+  doc.setFontSize(8.5)
+  doc.setTextColor(...C.slate)
+  let leftCurY = metaY + 13.5
+  doc.text(`${worker.role_designation}  •  Joined ${formatDate(worker.joining_date)}`, MARGIN, leftCurY)
+  leftCurY += 4.2
+  setNumericFont(doc)
+  doc.setTextColor(9, 9, 11)
+  doc.text(`Worker ID: ${worker.id.toUpperCase().slice(0, 8)}`, MARGIN, leftCurY)
+  leftCurY += 4.2
+
+  // Right column: Mob, Tel, Period, Generated, Operator, Node ID
+  const metaRightWidth = 78
+  const metaRightX = pageWidth - MARGIN - metaRightWidth
+  const contactPhone = profile.phone?.trim() || DEFAULT_COMPANY.phone
+  const contactTel = profile.telephone?.trim() || DEFAULT_COMPANY.telephone
+
+  const metaItems = [
+    { label: 'Mob', value: contactPhone },
+    { label: 'Tel', value: contactTel },
+    { label: 'Period', value: monthLabel },
+    { label: 'Generated', value: new Date().toLocaleString() },
+    { label: 'Operator', value: operatorName },
+    { label: 'Node ID', value: 'PC-PRIMARY-01' },
+  ]
+
+  let curMetaY = metaY + 2
+  for (const item of metaItems) {
+    setLatinFont(doc, 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(...C.slate)
+    doc.text(item.label, metaRightX, curMetaY)
+    setNumericFont(doc)
+    doc.setFontSize(8)
+    doc.setTextColor(9, 9, 11)
+    doc.text(item.value, pageWidth - MARGIN, curMetaY, { align: 'right' })
+    curMetaY += 4
+  }
+
+  let y = Math.max(leftCurY, curMetaY) + 3
+
+  // Invoice/quotation-style boxed tables: blue header row, hairline dark grid.
   const payslipTableOpts: UserOptions = {
-    theme: 'plain',
+    theme: 'grid',
     showFoot: 'lastPage',
-    headStyles: {
-      fillColor: [248, 250, 252], // clean light slate (no solid dark fills)
-      textColor: [31, 41, 55], // text-gray-800 bold
+    styles: {
+      font: tableFont(doc),
+      cellPadding: 2,
+      overflow: 'linebreak',
       fontSize: 8,
-      fontStyle: 'bold',
+      textColor: [9, 9, 11],
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
+      valign: 'middle',
+    },
+    headStyles: {
+      fillColor: BLUE_HEADER,
+      textColor: [255, 255, 255],
+      fontSize: 7.5,
+      fontStyle: strongStyle(doc),
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
       halign: 'left',
-      lineWidth: { bottom: 0.3 },
-      lineColor: [209, 213, 219], // border-b border-gray-300
     },
     bodyStyles: {
       fontSize: 8,
-      textColor: [38, 38, 38],
-      cellPadding: 1.8,
+      textColor: [9, 9, 11],
     },
-    alternateRowStyles: {
-      fillColor: [255, 255, 255],
+    footStyles: {
+      fillColor: BLUE_LIGHT_BG,
+      textColor: [9, 9, 11],
+      fontSize: 8,
+      fontStyle: strongStyle(doc),
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
     },
-    margin: { left: MARGIN, right: MARGIN, bottom: 8, top: 4 },
-    styles: {
-      cellPadding: 1.8,
-      overflow: 'linebreak',
-      lineWidth: { bottom: 0.15 },
-      lineColor: [229, 231, 235],
-    },
+    margin: { left: MARGIN, right: MARGIN, bottom: 16, top: 4 },
   }
 
   function drawCompactSectionTitle(secTitle: string, urTitle?: string, note?: string) {
-    doc.setFillColor(...C.crimson)
+    doc.setFillColor(...BLUE_HEADER)
     doc.rect(MARGIN, y - 2.4, 1.2, 3.8, 'F')
     setLatinFont(doc, 'bold')
     doc.setFontSize(9)
-    doc.setTextColor(31, 41, 55)
+    doc.setTextColor(9, 9, 11)
     doc.text(secTitle.toUpperCase(), MARGIN + 2.8, y)
     if (hasUrdu && urTitle) {
       const titleW = doc.getTextWidth(secTitle.toUpperCase())
-      drawUrdu(doc, urTitle, MARGIN + 4.5 + titleW, y + 0.5, { fontSize: 8, color: C.muted })
+      drawUrdu(doc, urTitle, MARGIN + 4.5 + titleW, y + 0.5, { fontSize: 8, color: BLUE_HEADER })
     }
     if (note) {
       setLatinFont(doc, 'normal')
@@ -1595,45 +1695,7 @@ export async function exportWorkerPayslipPDF(
     y += 2
   }
 
-  /* 1. Worker details (Strict 4-Column Single Row, Bold field headers, Light borders) */
-  drawCompactSectionTitle('Worker', UR.worker)
-  autoTable(doc, {
-    ...payslipTableOpts,
-    startY: y,
-    head: [['Name', 'Role', 'Joined', 'Worker ID']],
-    body: [[
-      worker.full_name,
-      worker.role_designation,
-      formatDate(worker.joining_date),
-      worker.id.toUpperCase().slice(0, 8),
-    ]],
-    headStyles: {
-      ...payslipTableOpts.headStyles,
-      fontStyle: 'bold',
-      fontSize: 8,
-      textColor: [31, 41, 55],
-      lineWidth: { bottom: 0.3 },
-      lineColor: [209, 213, 219],
-    },
-    columnStyles: {
-      0: { fontStyle: 'bold' },
-      3: { cellWidth: 32, fontStyle: 'bold', halign: 'right' },
-    },
-    ...urduCellHooks(doc, {
-      headUr: [UR.name, UR.role, UR.joined, UR.workerId],
-      onDidParse: (data) => {
-        if (data.section === 'head') {
-          data.cell.styles.fontStyle = 'bold'
-          data.cell.styles.textColor = [31, 41, 55]
-          if (data.column.index === 3) data.cell.styles.halign = 'right'
-        }
-        if (data.section === 'body' && data.column.index === 3) data.cell.styles.halign = 'right'
-      },
-    }),
-  })
-  y = getFinalY(doc) + 3
-
-  /* 2. Attendance summary */
+  /* 1. Attendance summary */
   drawCompactSectionTitle('Attendance Summary', UR.attendanceSummary, `${monthLabel} • Leave is paid, only Absent is unpaid`)
   autoTable(doc, {
     ...payslipTableOpts,
@@ -1651,8 +1713,7 @@ export async function exportWorkerPayslipPDF(
       onDidParse: (data) => {
         if (data.section === 'head') {
           data.cell.styles.halign = 'center'
-          data.cell.styles.fontStyle = 'bold'
-          data.cell.styles.textColor = [31, 41, 55]
+          data.cell.styles.fontStyle = strongStyle(doc)
         }
         if (data.section !== 'body') return
         if (data.column.index === 1) { data.cell.styles.textColor = C.green; data.cell.styles.fontStyle = 'bold' }
@@ -1663,7 +1724,7 @@ export async function exportWorkerPayslipPDF(
   })
   y = getFinalY(doc) + 3
 
-  /* 3. Salary breakdown */
+  /* 2. Salary breakdown */
   drawCompactSectionTitle('Salary Breakdown', UR.salaryBreakdown, 'Daily Rate = Base / Days in Period')
   autoTable(doc, {
     ...payslipTableOpts,
@@ -1691,21 +1752,20 @@ export async function exportWorkerPayslipPDF(
       },
       onDidParse: (data) => {
         if (data.section === 'head') {
-          data.cell.styles.fontStyle = 'bold'
-          data.cell.styles.textColor = [31, 41, 55]
+          data.cell.styles.fontStyle = strongStyle(doc)
           if (data.column.index === 1) data.cell.styles.halign = 'right'
         }
         if (data.section === 'body' && data.row.index === 6) {
-          data.cell.styles.textColor = C.crimson
-          data.cell.styles.fontStyle = 'bold'
-          data.cell.styles.fillColor = [254, 242, 242] // subtle red-50
+          data.cell.styles.textColor = BLUE_HEADER
+          data.cell.styles.fontStyle = strongStyle(doc)
+          data.cell.styles.fillColor = BLUE_LIGHT_BG // total row, matching the invoice grand-total box
         }
       },
     }),
   })
   y = getFinalY(doc) + 3
 
-  /* 4. Loans (informational only) */
+  /* 3. Loans (informational only) */
   drawCompactSectionTitle('Loans (Informational)', UR.loansInformational, 'NOT deducted from the Earned Salary shown above')
   autoTable(doc, {
     ...payslipTableOpts,
@@ -1728,12 +1788,12 @@ export async function exportWorkerPayslipPDF(
         ]]
       : undefined,
     footStyles: {
-      fillColor: [248, 250, 252],
-      textColor: [17, 24, 39],
-      fontStyle: 'bold',
+      fillColor: BLUE_LIGHT_BG,
+      textColor: [9, 9, 11],
+      fontStyle: strongStyle(doc),
       fontSize: 8,
-      lineWidth: { top: 0.3 },
-      lineColor: [209, 213, 219],
+      lineColor: BORDER_DARK,
+      lineWidth: 0.2,
     },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'center', cellWidth: 26 } },
     ...urduCellHooks(doc, {
@@ -1743,8 +1803,8 @@ export async function exportWorkerPayslipPDF(
       },
       onDidParse: (data) => {
         if (data.section === 'head' || data.section === 'foot') {
-          data.cell.styles.fontStyle = 'bold'
-          data.cell.styles.textColor = [31, 41, 55]
+          data.cell.styles.fontStyle = strongStyle(doc)
+          data.cell.styles.textColor = data.section === 'head' ? [255, 255, 255] : [9, 9, 11]
           if (data.column.index === 1 || data.column.index === 2) data.cell.styles.halign = 'right'
           if (data.section === 'head' && data.column.index === 3) data.cell.styles.halign = 'center'
           return
@@ -1758,21 +1818,62 @@ export async function exportWorkerPayslipPDF(
     }),
   })
 
-  // Signatures on the same single page
+  // Signatures (bottom-pinned, matching the invoice / quotation footer block)
   y = getFinalY(doc) + 6
-  const pageWidth = doc.internal.pageSize.getWidth()
-  doc.setDrawColor(156, 163, 175)
+  const sigY = Math.min(Math.max(y + 8, pageHeight - 40), pageHeight - 22)
+  const sigWidth = 60
+
+  doc.setDrawColor(15, 23, 42)
   doc.setLineWidth(0.3)
-  doc.line(MARGIN, y + 8, MARGIN + 45, y + 8)
-  doc.line(pageWidth - MARGIN - 45, y + 8, pageWidth - MARGIN, y + 8)
 
-  setLatinFont(doc, 'normal')
-  doc.setFontSize(7.5)
-  doc.setTextColor(75, 85, 99)
-  doc.text('Supervisor Signature / تصدیق نگران', MARGIN, y + 12)
-  doc.text('Worker Signature / دستخط کارکن', pageWidth - MARGIN, y + 12, { align: 'right' })
+  doc.line(MARGIN, sigY, MARGIN + sigWidth, sigY)
+  setLatinFont(doc, 'bold')
+  doc.setFontSize(8)
+  doc.setTextColor(9, 9, 11)
+  doc.text('Supervisor Signature', MARGIN + sigWidth / 2, sigY + 4, { align: 'center' })
+  if (hasUrdu) {
+    drawUrdu(doc, 'تصدیق نگران', MARGIN + sigWidth / 2, sigY + 8.5, {
+      align: 'center',
+      fontSize: 8,
+      color: [9, 9, 11],
+    })
+  }
 
-  drawReportFooter(doc, title)
+  doc.line(pageWidth - MARGIN - sigWidth, sigY, pageWidth - MARGIN, sigY)
+  doc.text('Worker Signature', pageWidth - MARGIN - sigWidth / 2, sigY + 4, { align: 'center' })
+  if (hasUrdu) {
+    drawUrdu(doc, 'دستخط کارکن', pageWidth - MARGIN - sigWidth / 2, sigY + 8.5, {
+      align: 'center',
+      fontSize: 8,
+      color: [9, 9, 11],
+    })
+  }
+
+  // Footer: company identity + contact details (same as invoice / quotation)
+  const totalPages = doc.getNumberOfPages()
+  for (let pNum = 1; pNum <= totalPages; pNum++) {
+    doc.setPage(pNum)
+
+    doc.setDrawColor(...BORDER_DARK)
+    doc.setLineWidth(0.2)
+    doc.line(MARGIN, pageHeight - 11, pageWidth - MARGIN, pageHeight - 11)
+
+    setLatinFont(doc, 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(24, 24, 27)
+    doc.text(COMPANY_LEGAL_NAME.toUpperCase(), MARGIN, pageHeight - 7)
+
+    setLatinFont(doc, 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(82, 82, 82)
+    const contactLine = `${profile.email || DEFAULT_COMPANY.email}   |   ${profile.website || DEFAULT_COMPANY.website}   |   ${profile.phone || DEFAULT_COMPANY.phone}`
+    doc.text(contactLine, pageWidth / 2, pageHeight - 7, { align: 'center' })
+
+    setNumericFont(doc)
+    doc.setFontSize(7.5)
+    doc.setTextColor(24, 24, 27)
+    doc.text(`Page ${pNum} of ${totalPages}`, pageWidth - MARGIN, pageHeight - 7, { align: 'right' })
+  }
 
   const stamp = `${year}-${String(month).padStart(2, '0')}`
   const nameSlug =
@@ -2993,6 +3094,157 @@ export async function exportPayrollVoucherPDF(
   }
 
   outputReport(doc, `glassco_payroll_voucher_${entry.entry_number}.pdf`)
+  return doc
+}
+
+export async function exportPayrollRunSlipPDF(
+  item: {
+    worker_name: string;
+    cost_class: string;
+    employment_type: string;
+    days_in_period: number;
+    present_days: number;
+    absent_days: number;
+    leave_days: number;
+    overtime_minutes: number;
+    undertime_minutes: number;
+    gross_earnings: number;
+    total_deductions: number;
+    net_pay: number;
+    amount_paid: number;
+    status: string;
+    lines?: Array<{ wage_type_name: string; category: string; amount: number }>;
+  },
+  runMeta: { run_no: string; period_code: string },
+  options: { operatorName?: string } = {}
+): Promise<jsPDF> {
+  const doc = createReportDoc('portrait')
+  const hasUrdu = await ensureUrduFont(doc)
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const contentWidth = pageWidth - MARGIN * 2
+  const NAVY: RGB = [11, 59, 130]
+  const BLUE: RGB = [30, 86, 160]
+
+  drawCompanyLogo(doc, MARGIN, 6, 15, 15)
+  setBrandFont(doc)
+  doc.setFontSize(18)
+  doc.setTextColor(...NAVY)
+  doc.text(COMPANY_HEADER.toUpperCase(), pageWidth / 2, 18, { align: 'center' })
+  setLatinFont(doc, 'normal')
+  doc.setFontSize(8)
+  doc.setTextColor(...C.muted)
+  doc.text('Employee Remuneration Statement / Payslip', pageWidth / 2, 23, { align: 'center' })
+
+  let y = 28
+  doc.setFillColor(...BLUE)
+  doc.rect(MARGIN, y, contentWidth, 8, 'F')
+  setLatinFont(doc, 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(...C.white)
+  doc.text(`PAYSLIP — ${runMeta.period_code} (${runMeta.run_no})`, pageWidth / 2, y + 5.5, { align: 'center' })
+  y += 14
+
+  const labelW = 35
+  const valW = contentWidth / 2 - labelW
+  y = drawBilingualTable(doc, {
+    startY: y,
+    columnWidths: [labelW, valW, labelW, valW],
+    labelColumns: [0, 2],
+    body: [
+      [{ en: 'Employee Name' }, { en: item.worker_name }, { en: 'Cost Class' }, { en: item.cost_class }],
+      [{ en: 'Employment' }, { en: item.employment_type }, { en: 'Attendance' }, { en: `P: ${item.present_days} | A: ${item.absent_days} | L: ${item.leave_days}` }],
+      [{ en: 'Overtime' }, { en: `${Math.floor(item.overtime_minutes / 60)}h ${item.overtime_minutes % 60}m` }, { en: 'Undertime' }, { en: `${Math.floor(item.undertime_minutes / 60)}h ${item.undertime_minutes % 60}m` }],
+    ],
+  })
+
+  y = ensureRoom(doc, y + 6, 40)
+  const lines = item.lines || []
+  const earnings = lines.filter((l) => l.category === 'EARNING')
+  const deductions = lines.filter((l) => l.category === 'DEDUCTION')
+
+  autoTable(doc, {
+    startY: y,
+    theme: 'grid',
+    head: [['EARNINGS COMPONENT', 'AMOUNT (PKR)', 'DEDUCTIONS COMPONENT', 'AMOUNT (PKR)']],
+    body: Array.from({ length: Math.max(earnings.length, deductions.length, 1) }).map((_, idx) => [
+      earnings[idx]?.wage_type_name || '-',
+      earnings[idx] ? earnings[idx].amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-',
+      deductions[idx]?.wage_type_name || '-',
+      deductions[idx] ? deductions[idx].amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '-',
+    ]),
+    margin: { left: MARGIN, right: MARGIN },
+    styles: { cellPadding: 2.5, fontSize: 8.5 },
+    headStyles: { fillColor: BLUE, textColor: C.white, fontStyle: 'bold' },
+  })
+
+  y = getFinalY(doc) + 8
+  const boxW = contentWidth * 0.45
+  const boxX = pageWidth - MARGIN - boxW
+  doc.setFillColor(...C.greenSoft)
+  doc.setDrawColor(...C.green)
+  doc.rect(boxX, y, boxW, 10, 'FD')
+  setLatinFont(doc, 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(...C.green)
+  doc.text('NET SALARY PAYABLE', boxX + 4, y + 6.5)
+  doc.text(`PKR ${item.net_pay.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, pageWidth - MARGIN - 4, y + 6.5, { align: 'right' })
+
+  drawReportFooter(doc, 'Employee Payslip')
+  outputReport(doc, `payslip_${item.worker_name.replace(/\s+/g, '_')}_${runMeta.period_code}.pdf`)
+  return doc
+}
+
+export async function exportDisbursementListPDF(
+  disbursements: Array<{
+    worker_name: string;
+    cost_class: string;
+    payment_method: string;
+    bank_name?: string | null;
+    account_iban?: string | null;
+    amount: number;
+    disbursement_batch_no?: string | null;
+  }>,
+  titleText = 'Payroll Disbursement Sheet',
+  operatorName = 'System Operator'
+): Promise<jsPDF> {
+  const doc = createReportDoc('landscape')
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const contentWidth = pageWidth - MARGIN * 2
+  const BLUE: RGB = [30, 86, 160]
+
+  let y = drawReportHeader(doc, {
+    title: titleText,
+    subtitle: `Total Staff: ${disbursements.length} · Bank & Cash Outflows`,
+    operatorName,
+  })
+
+  autoTable(doc, {
+    startY: y + 4,
+    theme: 'grid',
+    head: [['SR.', 'EMPLOYEE NAME', 'COST CLASS', 'PAY METHOD', 'BANK / BRANCH', 'ACCOUNT / IBAN', 'DISBURSEMENT REF', 'AMOUNT (PKR)']],
+    body: disbursements.map((d, i) => [
+      String(i + 1),
+      d.worker_name,
+      d.cost_class,
+      d.payment_method,
+      d.bank_name || '-',
+      d.account_iban || '-',
+      d.disbursement_batch_no || '-',
+      d.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }),
+    ]),
+    foot: [['TOTAL', '', '', '', '', '', '', disbursements.reduce((s, d) => s + d.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })]],
+    margin: { left: MARGIN, right: MARGIN },
+    styles: { cellPadding: 2.5, fontSize: 8 },
+    headStyles: { fillColor: BLUE, textColor: C.white, fontStyle: 'bold' },
+    footStyles: { fillColor: C.zebra, textColor: C.ink, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 12, halign: 'center' },
+      7: { halign: 'right' },
+    },
+  })
+
+  drawReportFooter(doc, titleText)
+  outputReport(doc, `payroll_disbursement_${ledgerDateStamp()}.pdf`)
   return doc
 }
 
