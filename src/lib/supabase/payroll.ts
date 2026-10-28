@@ -133,6 +133,12 @@ export interface PayrollPaymentLog {
   created_at: string;
   payment_account?: Account | null;
   item?: PayrollRunItem | null;
+  run?: {
+    id: string;
+    run_no: string;
+    status?: PayrollRunStatus;
+    period?: Pick<PayrollPeriod, "period_code" | "start_date" | "end_date"> | null;
+  } | null;
 }
 
 // ─── Headers helper ────────────────────────────────────────────────────────
@@ -529,15 +535,180 @@ export async function reversePayrollRun(
 export async function fetchPayrollPaymentLogs(runId?: string): Promise<PayrollPaymentLog[]> {
   if (!SUPABASE_URL) return [];
   try {
-    let url = `${SUPABASE_URL}/rest/v1/payroll_payment_logs?select=*,payment_account:accounts_chart(id,account_code,account_name),item:payroll_run_items(id,worker_name,net_pay)&order=payment_date.desc,created_at.desc`;
+    let url = `${SUPABASE_URL}/rest/v1/payroll_payment_logs?select=*,payment_account:accounts_chart(id,account_code,account_name),item:payroll_run_items(id,worker_id,worker_name,cost_class,employment_type,net_pay),run:payroll_runs_v2(id,run_no,status,period:payroll_periods(period_code,start_date,end_date))&order=payment_date.desc,created_at.desc`;
     if (runId) {
       url += `&run_id=eq.${runId}`;
     }
     const res = await fetch(url, { headers: headers() });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // Fallback with reduced joins (older schemas / RLS restrictions)
+      let fbUrl = `${SUPABASE_URL}/rest/v1/payroll_payment_logs?select=*,payment_account:accounts_chart(id,account_code,account_name),item:payroll_run_items(id,worker_id,worker_name,cost_class,net_pay)&order=payment_date.desc,created_at.desc`;
+      if (runId) fbUrl += `&run_id=eq.${runId}`;
+      const fb = await fetch(fbUrl, { headers: headers() });
+      if (!fb.ok) return [];
+      return (await fb.json()) as PayrollPaymentLog[];
+    }
     return (await res.json()) as PayrollPaymentLog[];
   } catch (err) {
     console.error("fetchPayrollPaymentLogs error:", err);
+    return [];
+  }
+}
+
+// ─── Employee Account Ledger (head-wise employee view) ────────────────────
+
+export type EmployeeMonthStatus = "PAID" | "PARTIALLY_PAID" | "PENDING";
+
+export interface EmployeeLedgerMonth {
+  runId: string;
+  runNo: string;
+  periodCode: string;
+  periodStart: string;
+  periodEnd: string;
+  costClass: PayrollCostClass;
+  grossEarnings: number;
+  totalDeductions: number;
+  netPay: number;
+  amountPaid: number;
+  pendingAmount: number;
+  status: EmployeeMonthStatus;
+  lastPaymentDate: string | null;
+  isLegacy: boolean;
+}
+
+export interface EmployeeLedgerAccount {
+  workerId: string;
+  workerName: string;
+  costClass: PayrollCostClass;
+  employmentType: string;
+  roleDesignation: string | null;
+  isActive: boolean | null;
+  paymentProfile: {
+    defaultMethod: PaymentMethod | null;
+    bankName: string | null;
+    accountIban: string | null;
+    cnic: string | null;
+  };
+  totalNetPay: number;
+  totalPaid: number;
+  totalPending: number;
+  status: EmployeeMonthStatus;
+  lastPaymentDate: string | null;
+  months: EmployeeLedgerMonth[];
+}
+
+/**
+ * Aggregates payroll runs + payment logs + worker profiles into an
+ * employee-centric account ledger: one account per worker with a
+ * month-by-month paid vs pending breakdown.
+ *
+ * Reversed (storno) runs are voided and excluded from ledger balances.
+ */
+export function buildEmployeeLedger(
+  runs: PayrollRun[],
+  paymentLogs: PayrollPaymentLog[] = [],
+  workers: Worker[] = []
+): EmployeeLedgerAccount[] {
+  // Latest payment date per payroll run item
+  const lastPaymentByItem = new Map<string, string>();
+  for (const log of paymentLogs) {
+    if (!log.item_id || !log.payment_date) continue;
+    const prev = lastPaymentByItem.get(log.item_id);
+    if (!prev || log.payment_date > prev) lastPaymentByItem.set(log.item_id, log.payment_date);
+  }
+
+  const workerById = new Map<string, Worker>(workers.map((w) => [w.id, w]));
+  const accounts = new Map<string, EmployeeLedgerAccount>();
+
+  for (const run of runs) {
+    if (run.status === "REVERSED") continue; // voided via storno — exclude from balances
+    const periodCode = run.period?.period_code || "—";
+    const periodStart = run.period?.start_date || run.created_at?.slice(0, 10) || "";
+    const periodEnd = run.period?.end_date || periodStart;
+
+    for (const item of run.items || []) {
+      const key = item.worker_id || item.worker_name;
+      if (!key) continue;
+
+      let acc = accounts.get(key);
+      if (!acc) {
+        const w = workerById.get(item.worker_id);
+        acc = {
+          workerId: item.worker_id,
+          workerName: item.worker_name || w?.full_name || "Unknown Employee",
+          costClass: item.cost_class || w?.cost_class || "ADMIN",
+          employmentType: item.employment_type || w?.employment_type || "—",
+          roleDesignation: w?.role_designation ?? null,
+          isActive: w?.is_active ?? null,
+          paymentProfile: {
+            defaultMethod: w?.default_pay_method ?? null,
+            bankName: w?.bank_name ?? null,
+            accountIban: w?.account_iban ?? null,
+            cnic: w?.cnic_no ?? null,
+          },
+          totalNetPay: 0,
+          totalPaid: 0,
+          totalPending: 0,
+          status: "PENDING",
+          lastPaymentDate: null,
+          months: [],
+        };
+        accounts.set(key, acc);
+      }
+
+      const netPay = round2(Number(item.net_pay) || 0);
+      const amountPaid = round2(Number(item.amount_paid) || 0);
+      const pending = Math.max(0, round2(netPay - amountPaid));
+      const status: EmployeeMonthStatus =
+        netPay > 0 && pending <= 0 ? "PAID" : amountPaid > 0 ? "PARTIALLY_PAID" : "PENDING";
+
+      acc.months.push({
+        runId: run.id,
+        runNo: run.run_no,
+        periodCode,
+        periodStart,
+        periodEnd,
+        costClass: item.cost_class || acc.costClass,
+        grossEarnings: round2(Number(item.gross_earnings) || 0),
+        totalDeductions: round2(Number(item.total_deductions) || 0),
+        netPay,
+        amountPaid,
+        pendingAmount: pending,
+        status,
+        lastPaymentDate: lastPaymentByItem.get(item.id) ?? null,
+        isLegacy: run.run_type === "LEGACY",
+      });
+    }
+  }
+
+  const list = [...accounts.values()].map((acc) => {
+    acc.months.sort((a, b) => a.periodStart.localeCompare(b.periodStart));
+    acc.totalNetPay = round2(acc.months.reduce((s, m) => s + m.netPay, 0));
+    acc.totalPaid = round2(acc.months.reduce((s, m) => s + m.amountPaid, 0));
+    acc.totalPending = round2(acc.months.reduce((s, m) => s + m.pendingAmount, 0));
+    acc.status = acc.totalPending > 0 ? (acc.totalPaid > 0 ? "PARTIALLY_PAID" : "PENDING") : "PAID";
+    const paidDates = acc.months.map((m) => m.lastPaymentDate).filter(Boolean) as string[];
+    acc.lastPaymentDate = paidDates.sort().at(-1) ?? null;
+    return acc;
+  });
+
+  // Outstanding balances first, then alphabetical
+  return list.sort(
+    (a, b) => b.totalPending - a.totalPending || a.workerName.localeCompare(b.workerName)
+  );
+}
+
+/** All workers (including inactive) — used to enrich the employee ledger profiles. */
+export async function fetchPayrollEmployeeProfiles(): Promise<Worker[]> {
+  if (!SUPABASE_URL) return [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/workers?order=full_name.asc`, {
+      headers: headers(),
+    });
+    if (!res.ok) return [];
+    return (await res.json()) as Worker[];
+  } catch (err) {
+    console.error("fetchPayrollEmployeeProfiles error:", err);
     return [];
   }
 }

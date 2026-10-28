@@ -1,0 +1,380 @@
+"use client";
+
+import React, { useMemo, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Search,
+  Users,
+  Wallet,
+  Banknote,
+  AlertTriangle,
+  ReceiptText,
+  Factory,
+  Building2,
+  UserRound,
+} from "lucide-react";
+import GlassCard from "@/components/ui/GlassCard";
+import { PayrollStatusBadge, PayrollHeadBadge } from "./PayrollBadges";
+import { formatPKR } from "@/lib/utils/formatters";
+import {
+  type EmployeeLedgerAccount,
+  type EmployeeLedgerMonth,
+} from "@/lib/supabase/payroll";
+
+interface EmployeeLedgerViewProps {
+  /** Pre-aggregated employee accounts (see buildEmployeeLedger). */
+  ledger: EmployeeLedgerAccount[];
+  /** Worker to auto-expand when navigating back from Transaction History. */
+  focusWorkerId?: string | null;
+  /** Jump to the Transaction History tab filtered for this employee. */
+  onViewTransactions: (workerId: string, workerName: string) => void;
+}
+
+function maskIban(iban: string | null | undefined): string | null {
+  if (!iban) return null;
+  const clean = iban.replace(/\s+/g, "");
+  if (clean.length <= 4) return clean;
+  return `•••• ${clean.slice(-4)}`;
+}
+
+function formatDate(date: string | null): string {
+  if (!date) return "—";
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return date;
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+export default function EmployeeLedgerView({
+  ledger,
+  focusWorkerId,
+  onViewTransactions,
+}: EmployeeLedgerViewProps) {
+  // focusWorkerId seeds the expansion — the parent remounts this view via `key`
+  // whenever the focused employee changes.
+  const [search, setSearch] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(focusWorkerId ?? null);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return ledger;
+    return ledger.filter(
+      (a) =>
+        a.workerName.toLowerCase().includes(q) ||
+        (a.roleDesignation ?? "").toLowerCase().includes(q) ||
+        (a.paymentProfile.bankName ?? "").toLowerCase().includes(q)
+    );
+  }, [ledger, search]);
+
+  const totals = useMemo(() => {
+    const net = ledger.reduce((s, a) => s + a.totalNetPay, 0);
+    const paid = ledger.reduce((s, a) => s + a.totalPaid, 0);
+    const pending = ledger.reduce((s, a) => s + a.totalPending, 0);
+    const outstanding = ledger.filter((a) => a.totalPending > 0).length;
+    return { net, paid, pending, outstanding };
+  }, [ledger]);
+
+  const summaryCards = [
+    {
+      label: "Employees Tracked",
+      value: String(ledger.length),
+      sub: `${totals.outstanding} with outstanding balance`,
+      icon: Users,
+      color: "text-foreground",
+    },
+    {
+      label: "Total Payable (All Months)",
+      value: formatPKR(totals.net),
+      sub: "Net gross-to-net across periods",
+      icon: Wallet,
+      color: "text-crimson-primary",
+    },
+    {
+      label: "Total Disbursed",
+      value: formatPKR(totals.paid),
+      sub: "Cash + bank payments executed",
+      icon: Banknote,
+      color: "text-status-optimal",
+    },
+    {
+      label: "Outstanding / Pending",
+      value: formatPKR(totals.pending),
+      sub: "Unpaid salary left per employee",
+      icon: AlertTriangle,
+      color: totals.pending > 0 ? "text-amber-500" : "text-status-optimal",
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* ─── Summary Tiles ─────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {summaryCards.map((card) => (
+          <GlassCard key={card.label} className="p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] text-muted uppercase tracking-wider truncate">{card.label}</p>
+                <p className={`text-h2 font-bold font-mono mt-0.5 truncate ${card.color}`}>{card.value}</p>
+                <p className="text-[10px] text-muted mt-0.5 truncate">{card.sub}</p>
+              </div>
+              <div className="bg-bg-muted p-2 rounded-lg shrink-0">
+                <card.icon className="w-4 h-4 text-secondary" />
+              </div>
+            </div>
+          </GlassCard>
+        ))}
+      </div>
+
+      {/* ─── Employee Directory ────────────────────────────────────────── */}
+      <GlassCard className="overflow-hidden">
+        <div className="p-4 border-b border-border-subtle flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-h2 font-semibold text-foreground flex items-center gap-2">
+              <Users className="w-4 h-4 text-crimson-primary" />
+              Employee Account Ledger
+            </h3>
+            <p className="text-caption text-muted">
+              Head-wise employee accounts — click an employee for the month-by-month paid vs pending breakdown
+            </p>
+          </div>
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search employee, role, bank..."
+              className="h-9 pl-9 pr-3 w-full md:w-64 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption placeholder:text-muted"
+            />
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="p-10 text-center text-muted">
+            <Users className="w-10 h-10 mx-auto text-muted/50 mb-2" />
+            <p className="text-body font-medium">
+              {ledger.length === 0 ? "No employee payroll accounts yet." : "No employees match your search."}
+            </p>
+            <p className="text-caption mt-1">
+              {ledger.length === 0
+                ? "Approve a payroll run from the Calculation Wizard to build employee accounts."
+                : "Try a different name, role, or bank."}
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-caption text-left">
+              <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
+                <tr>
+                  <th className="p-3 pl-4">Employee</th>
+                  <th className="p-3">Head / Category</th>
+                  <th className="p-3">Payment Profile</th>
+                  <th className="p-3 text-center">Months</th>
+                  <th className="p-3 text-right">Net Payable</th>
+                  <th className="p-3 text-right">Paid</th>
+                  <th className="p-3 text-right">Left / Pending</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3 w-8"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {filtered.map((acc) => {
+                  const expanded = expandedId === acc.workerId;
+                  return (
+                    <React.Fragment key={acc.workerId || acc.workerName}>
+                      <tr
+                        onClick={() => setExpandedId(expanded ? null : acc.workerId)}
+                        className={`hover:bg-bg-subtle/60 cursor-pointer transition-colors ${
+                          expanded ? "bg-bg-subtle/40" : ""
+                        }`}
+                      >
+                        <td className="p-3 pl-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-full bg-crimson-primary/10 border border-crimson-primary/20 flex items-center justify-center shrink-0">
+                              <span className="text-[11px] font-bold text-crimson-primary">
+                                {acc.workerName
+                                  .split(" ")
+                                  .map((p) => p[0])
+                                  .slice(0, 2)
+                                  .join("")
+                                  .toUpperCase() || "?"}
+                              </span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-foreground truncate flex items-center gap-1.5">
+                                {acc.workerName}
+                                {acc.isActive === false && (
+                                  <span className="text-[9px] px-1.5 py-px rounded bg-muted/10 text-muted border border-border-subtle font-semibold">
+                                    INACTIVE
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[11px] text-muted truncate">
+                                {acc.roleDesignation || "—"} · {acc.employmentType.replace(/_/g, " ")}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1.5">
+                            {acc.costClass === "PRODUCTION" ? (
+                              <Factory className="w-3.5 h-3.5 text-amber-500" />
+                            ) : (
+                              <Building2 className="w-3.5 h-3.5 text-blue-500" />
+                            )}
+                            <PayrollHeadBadge costClass={acc.costClass} />
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          {acc.paymentProfile.bankName ? (
+                            <div>
+                              <p className="text-foreground font-medium">{acc.paymentProfile.bankName}</p>
+                              <p className="text-[11px] text-muted font-mono">
+                                {maskIban(acc.paymentProfile.accountIban) || "IBAN on file"}
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-muted">Cash / No bank on file</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-mono text-secondary">{acc.months.length}</td>
+                        <td className="p-3 text-right font-mono font-semibold text-foreground">
+                          {formatPKR(acc.totalNetPay)}
+                        </td>
+                        <td className="p-3 text-right font-mono font-semibold text-status-optimal">
+                          {formatPKR(acc.totalPaid)}
+                        </td>
+                        <td
+                          className={`p-3 text-right font-mono font-semibold ${
+                            acc.totalPending > 0 ? "text-amber-500" : "text-muted"
+                          }`}
+                        >
+                          {formatPKR(acc.totalPending)}
+                        </td>
+                        <td className="p-3">
+                          <PayrollStatusBadge status={acc.status} />
+                        </td>
+                        <td className="p-3 pr-4 text-muted">
+                          {expanded ? (
+                            <ChevronDown className="w-4 h-4" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4" />
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* ── Expanded month-by-month breakdown ────────────── */}
+                      {expanded && (
+                        <tr className="bg-bg-subtle/30">
+                          <td colSpan={9} className="p-0">
+                            <EmployeeBreakdown acc={acc} onViewTransactions={onViewTransactions} />
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
+    </div>
+  );
+}
+
+function EmployeeBreakdown({
+  acc,
+  onViewTransactions,
+}: {
+  acc: EmployeeLedgerAccount;
+  onViewTransactions: (workerId: string, workerName: string) => void;
+}) {
+  return (
+    <div className="p-4 md:p-5 border-t border-border-subtle space-y-3">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-body font-semibold text-foreground">
+          <UserRound className="w-4 h-4 text-crimson-primary" />
+          {acc.workerName}
+          <span className="text-caption text-muted font-normal">
+            — Month-by-month payment tracking ({acc.months.length} period{acc.months.length === 1 ? "" : "s"})
+          </span>
+        </div>
+        <button
+          onClick={() => onViewTransactions(acc.workerId, acc.workerName)}
+          className="h-8 px-3 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-caption font-medium transition-colors flex items-center gap-1.5 self-start"
+        >
+          <ReceiptText className="w-3.5 h-3.5" />
+          View Transactions
+        </button>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-border-subtle">
+        <table className="w-full text-caption text-left">
+          <thead className="bg-bg-subtle text-secondary uppercase text-[10px]">
+            <tr>
+              <th className="p-2.5">Month / Period</th>
+              <th className="p-2.5">Run Ref</th>
+              <th className="p-2.5 text-right">Gross</th>
+              <th className="p-2.5 text-right">Deductions</th>
+              <th className="p-2.5 text-right">Net Salary</th>
+              <th className="p-2.5 text-right">Paid</th>
+              <th className="p-2.5 text-right">Left Unpaid</th>
+              <th className="p-2.5">Last Payment</th>
+              <th className="p-2.5">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-subtle font-mono">
+            {acc.months.map((m: EmployeeLedgerMonth) => (
+              <tr key={m.runId} className="hover:bg-bg-subtle/50 transition-colors">
+                <td className="p-2.5 font-sans font-semibold text-foreground">
+                  {m.periodCode}
+                  {m.isLegacy && (
+                    <span className="ml-1.5 text-[9px] px-1.5 py-px rounded bg-muted/10 text-muted border border-border-subtle font-semibold">
+                      LEGACY
+                    </span>
+                  )}
+                </td>
+                <td className="p-2.5 text-secondary text-[11px]">{m.runNo}</td>
+                <td className="p-2.5 text-right text-secondary">{formatPKR(m.grossEarnings)}</td>
+                <td className="p-2.5 text-right text-status-alert">−{formatPKR(m.totalDeductions)}</td>
+                <td className="p-2.5 text-right font-bold text-foreground">{formatPKR(m.netPay)}</td>
+                <td className="p-2.5 text-right font-semibold text-status-optimal">{formatPKR(m.amountPaid)}</td>
+                <td
+                  className={`p-2.5 text-right font-semibold ${
+                    m.pendingAmount > 0 ? "text-amber-500" : "text-muted"
+                  }`}
+                >
+                  {formatPKR(m.pendingAmount)}
+                </td>
+                <td className="p-2.5 font-sans text-muted text-[11px]">{formatDate(m.lastPaymentDate)}</td>
+                <td className="p-2.5">
+                  <PayrollStatusBadge status={m.status} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="bg-bg-subtle font-mono text-[11px] uppercase tracking-wider">
+              <td colSpan={4} className="p-2.5 text-secondary font-semibold">
+                Account Totals
+              </td>
+              <td className="p-2.5 text-right font-bold text-foreground">{formatPKR(acc.totalNetPay)}</td>
+              <td className="p-2.5 text-right font-bold text-status-optimal">{formatPKR(acc.totalPaid)}</td>
+              <td
+                className={`p-2.5 text-right font-bold ${
+                  acc.totalPending > 0 ? "text-amber-500" : "text-muted"
+                }`}
+              >
+                {formatPKR(acc.totalPending)}
+              </td>
+              <td colSpan={2} className="p-2.5 font-sans text-[11px] text-muted">
+                Last paid: {formatDate(acc.lastPaymentDate)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}

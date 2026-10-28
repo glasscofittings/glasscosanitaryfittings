@@ -964,6 +964,27 @@ export async function createInvoiceItems(
     let result = await insert(true);
     if (!result.ok && result.code === "23503") {
       // Foreign-key violation on product_id: keep the lines, drop the link.
+      //
+      // Dropping the link is a last resort, never a silent one. A null
+      // product_id forces approve_dispatch() to resolve stock by product NAME
+      // (LIMIT 1), and distinct products can share a display name — so stock
+      // can be deducted from the wrong product. Migration
+      // 20261024010000_fix_sales_items_product_fk.sql repoints this FK at
+      // sanitary_products, after which this branch should stop firing entirely.
+      console.error(
+        "Supabase Error [sales_invoice_items insert]: FK violation on " +
+          "product_id — invoice lines saved WITHOUT their product link. " +
+          "Stock approval will fall back to name matching, which is unsafe " +
+          "for products that share a display name. Run migration " +
+          "20261024010000_fix_sales_items_product_fk.sql.",
+        {
+          code: result.code,
+          message: result.message,
+          affected: items
+            .filter((item) => item.product_id)
+            .map((item) => item.product_name || item.product_id),
+        },
+      );
       result = await insert(false);
     }
     if (!result.ok) {
@@ -1746,7 +1767,7 @@ export function generateInvoiceHTML(
       ${SANS_FONT_FACES_CSS}
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;background:#eef1f5;}
-      body{font-family:${SANS_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:400;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      body{font-family:${SANS_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:600;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
       .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
@@ -1756,8 +1777,8 @@ export function generateInvoiceHTML(
       .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;color:#09090b;}
       .meta{display:flex;justify-content:space-between;gap:10mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
-      .to{font-size:10.5px;font-weight:600;color:#09090b;}
-      .cust-name{font-size:12.5px;font-weight:600;color:#09090b;margin-top:3px;}
+      .to{font-size:14px;font-weight:800;color:#09090b;}
+      .cust-name{font-size:14px;font-weight:800;color:#09090b;margin-top:3px;}
       .cust-addr{margin-top:2px;color:#18181b;}
       .cust-contact{margin-top:2px;color:#18181b;}
       .meta-r{flex:0 0 auto;min-width:78mm;}
@@ -1766,17 +1787,17 @@ export function generateInvoiceHTML(
       .kv .v{font-weight:600;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:#09090b;}
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:2px solid #3c3f42ff;padding:5px 6px;vertical-align:middle;}
-      table.items thead th{background:#d8e2f4; color:#09090b;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;color:#09090b;}
-      table.items tbody td{font-size:10.5px;color:#09090b;}
+      table.items thead th{background:#d8e2f4; color:#09090b;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
+      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:700;font-size:9px;color:#09090b;}
+      table.items tbody td{font-size:14px;color:#09090b;}
       table.items .ctr{text-align:center;}
       table.items .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
       .mono{font-variant-numeric:tabular-nums;}
-      .prod{font-weight:600;color:#09090b;}
+      .prod{font-weight:800;color:#09090b;}
       .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#d8e2f4; font-weight:600;color:#09090b;}
+      tr.total-row td{background:#d8e2f4; font-weight:800;color:#09090b;}
       .lower{display:flex;justify-content:flex-end;margin-top:5mm;}
       /*------------------------------------------------------------- Summary Box -------------------------------------------------*/
       .summary-col{display:flex;flex-direction:column;gap:3px;width:38%;min-width:60mm;max-width:96mm;page-break-inside:avoid;}
@@ -2203,20 +2224,34 @@ export async function approveDispatch(
       /* non-JSON response */
     }
     if (!res.ok) {
-      const { message, hint } = body as { message?: string; hint?: string };
+      // PostgREST errors carry { message, details, hint, code }; a gateway or
+      // proxy failure can come back with an empty/non-JSON body. Read every
+      // field and fall back through them so the operator always sees WHY the
+      // approval was rejected — an empty message must never swallow the cause.
+      const { message, details, hint, code } = body as {
+        message?: string;
+        details?: string;
+        hint?: string;
+        code?: string;
+      };
+      const reason =
+        [message, details, hint, code].find((part) => typeof part === "string" && part.trim()) ??
+        (text.trim() ? text.trim().slice(0, 300) : "");
       console.error("Supabase Error [approve_dispatch RPC]:", {
         status: res.status,
-        message: message ?? text.slice(0, 300),
-        hint: hint ?? null,
+        reason: reason || `(empty response body, HTTP ${res.status})`,
       });
-      if (/schema cache|not find function/i.test(message ?? "")) {
+      if (/schema cache|not find function/i.test(reason)) {
         return {
           success: false,
           error:
             "The approve_dispatch function is missing — run migration 20261107010000_dispatch_approval_workflow.sql in the database SQL editor, then retry.",
         };
       }
-      return { success: false, error: message ?? `Approval failed (HTTP ${res.status})` };
+      return {
+        success: false,
+        error: reason || `Approval failed (HTTP ${res.status})`,
+      };
     }
     const data = body as {
       status?: string;

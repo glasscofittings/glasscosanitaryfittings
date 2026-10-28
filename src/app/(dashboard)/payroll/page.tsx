@@ -4,23 +4,18 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
 import {
   Plus,
-  Search,
   RefreshCw,
-  Building2,
-  Factory,
-  CheckCircle,
-  FileText,
   DollarSign,
-  Printer,
   RotateCcw,
   AlertTriangle,
   Play,
   Layers,
   Calendar,
-  Lock,
-  ChevronRight,
+  FileText,
   Download,
   Users,
+  BookUser,
+  ReceiptText,
 } from "lucide-react";
 import CrimsonButton from "@/components/ui/CrimsonButton";
 import GlassCard from "@/components/ui/GlassCard";
@@ -30,6 +25,7 @@ import {
   fetchPayrollPeriods,
   fetchPayrollWageTypes,
   fetchPayrollRuns,
+  fetchPayrollEmployeeProfiles,
   createPayrollPeriod,
   simulatePayrollRun,
   createPayrollRunFromSimulation,
@@ -37,16 +33,26 @@ import {
   payPayrollItems,
   reversePayrollRun,
   fetchPayrollPaymentLogs,
+  buildEmployeeLedger,
   type PayrollPeriod,
   type PayrollWageType,
   type PayrollRun,
   type PayrollPaymentLog,
   type PayrollRunItem,
 } from "@/lib/supabase/payroll";
+import { type Worker } from "@/lib/supabase/labour";
+import EmployeeLedgerView from "@/components/modules/payroll/EmployeeLedgerView";
+import TransactionHistory from "@/components/modules/payroll/TransactionHistory";
 import { exportPayrollRunSlipPDF, exportDisbursementListPDF } from "@/lib/pdf-exporter";
 import { useAuth } from "@/components/providers/AuthProvider";
 
-type TabKey = "runs" | "simulation" | "payslips" | "disbursements" | "wage_types" | "periods";
+type TabKey = "runs" | "ledger" | "transactions" | "simulation" | "wage_types" | "periods";
+
+/** Cross-tab focus for seamless employee ↔ transaction navigation. */
+interface EmployeeFocus {
+  id: string;
+  name: string;
+}
 
 export default function SAPPayrollPage() {
   const { profile } = useAuth();
@@ -62,6 +68,11 @@ export default function SAPPayrollPage() {
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [paymentLogs, setPaymentLogs] = useState<PayrollPaymentLog[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+
+  // Cross-tab employee focus (Account Ledger ↔ Transaction History)
+  const [ledgerFocus, setLedgerFocus] = useState<EmployeeFocus | null>(null);
+  const [txnFocus, setTxnFocus] = useState<EmployeeFocus | null>(null);
 
   // Simulation Wizard state
   const [simPeriodId, setSimPeriodId] = useState<string>("");
@@ -91,18 +102,20 @@ export default function SAPPayrollPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [pList, wtList, rList, accList, logs] = await Promise.all([
+      const [pList, wtList, rList, accList, logs, workerList] = await Promise.all([
         fetchPayrollPeriods(),
         fetchPayrollWageTypes(),
         fetchPayrollRuns(),
         fetchAccounts(),
         fetchPayrollPaymentLogs(),
+        fetchPayrollEmployeeProfiles(),
       ]);
       setPeriods(pList);
       setWageTypes(wtList);
       setRuns(rList);
       setAccounts(accList);
       setPaymentLogs(logs);
+      setWorkers(workerList);
 
       if (pList.length > 0 && !simPeriodId) {
         setSimPeriodId(pList[0].id);
@@ -317,6 +330,24 @@ export default function SAPPayrollPage() {
     );
   }, [accounts]);
 
+  // Employee-centric account ledger (head-wise employee accounts)
+  const employeeLedger = useMemo(
+    () => buildEmployeeLedger(runs, paymentLogs, workers),
+    [runs, paymentLogs, workers]
+  );
+
+  // ─── Cross-tab navigation (Ledger ⇄ Transactions) ─────────────────────
+
+  const goToEmployeeTransactions = (workerId: string, workerName: string) => {
+    setTxnFocus({ id: workerId, name: workerName });
+    setActiveTab("transactions");
+  };
+
+  const goToEmployeeLedger = (workerId: string, workerName: string) => {
+    setLedgerFocus({ id: workerId, name: workerName });
+    setActiveTab("ledger");
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* ─── Header ──────────────────────────────────────────────────────── */}
@@ -363,8 +394,9 @@ export default function SAPPayrollPage() {
       <div className="flex border-b border-border-default gap-2 overflow-x-auto pb-px">
         {[
           { key: "runs", label: "Payroll Runs", icon: Layers, count: runs.length },
+          { key: "ledger", label: "Account Ledger", icon: BookUser, count: employeeLedger.length },
+          { key: "transactions", label: "Transaction History", icon: ReceiptText, count: paymentLogs.length },
           { key: "simulation", label: "Calculation Wizard", icon: Play },
-          { key: "disbursements", label: "Disbursement Logs", icon: DollarSign, count: paymentLogs.length },
           { key: "wage_types", label: "Wage Types (COA Mapping)", icon: FileText, count: wageTypes.length },
           { key: "periods", label: "Payroll Periods", icon: Calendar, count: periods.length },
         ].map((tab) => {
@@ -603,65 +635,29 @@ export default function SAPPayrollPage() {
         </div>
       )}
 
-      {/* ─── TAB 3: DISBURSEMENT LOGS ─────────────────────────────────────── */}
-      {activeTab === "disbursements" && (
-        <GlassCard className="p-5">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h3 className="text-h2 font-semibold text-foreground">Disbursement & Bank Payment Register</h3>
-              <p className="text-caption text-muted">Audited cash and bank transactions linked to general ledger vouchers</p>
-            </div>
-            <button
-              onClick={() => handleExportDisbursement()}
-              className="h-8 px-3 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-caption flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export Full Sheet PDF
-            </button>
-          </div>
-
-          {paymentLogs.length === 0 ? (
-            <p className="text-caption text-muted py-8 text-center">No payment disbursements executed yet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-caption text-left">
-                <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
-                  <tr>
-                    <th className="p-3">Batch Ref</th>
-                    <th className="p-3">Date</th>
-                    <th className="p-3">Employee</th>
-                    <th className="p-3">Method</th>
-                    <th className="p-3">Disbursed Account</th>
-                    <th className="p-3 text-right">Amount (PKR)</th>
-                    <th className="p-3">Operator</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-subtle font-mono">
-                  {paymentLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-bg-subtle/50 transition-colors">
-                      <td className="p-3 font-bold text-foreground">{log.disbursement_batch_no || "-"}</td>
-                      <td className="p-3 text-secondary">{log.payment_date}</td>
-                      <td className="p-3 font-sans text-foreground">{log.item?.worker_name || "-"}</td>
-                      <td className="p-3">
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${log.payment_method === "BANK" ? "bg-blue-500/10 text-blue-500" : "bg-emerald-500/10 text-emerald-500"}`}>
-                          {log.payment_method}
-                        </span>
-                      </td>
-                      <td className="p-3 font-sans text-secondary">
-                        {log.payment_account?.account_code} {log.payment_account?.account_name}
-                      </td>
-                      <td className="p-3 text-right font-bold text-status-optimal">{formatPKR(log.amount)}</td>
-                      <td className="p-3 font-sans text-muted">{log.operator_name || "System"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </GlassCard>
+      {/* ─── TAB 3: EMPLOYEE ACCOUNT LEDGER ────────────────────────────── */}
+      {activeTab === "ledger" && (
+        <EmployeeLedgerView
+          key={`ledger-${ledgerFocus?.id ?? "all"}`}
+          ledger={employeeLedger}
+          focusWorkerId={ledgerFocus?.id ?? null}
+          onViewTransactions={goToEmployeeTransactions}
+        />
       )}
 
-      {/* ─── TAB 4: WAGE TYPES ────────────────────────────────────────────── */}
+      {/* ─── TAB 4: TRANSACTION HISTORY ────────────────────────────────── */}
+      {activeTab === "transactions" && (
+        <TransactionHistory
+          key={`txn-${txnFocus?.id ?? "all"}`}
+          logs={paymentLogs}
+          focusWorkerId={txnFocus?.id ?? null}
+          focusWorkerName={txnFocus?.name ?? null}
+          onOpenLedger={goToEmployeeLedger}
+          onExport={() => handleExportDisbursement()}
+        />
+      )}
+
+      {/* ─── TAB 5: WAGE TYPES ────────────────────────────────────────────── */}
       {activeTab === "wage_types" && (
         <GlassCard className="p-5">
           <div className="mb-4">
@@ -709,7 +705,7 @@ export default function SAPPayrollPage() {
         </GlassCard>
       )}
 
-      {/* ─── TAB 5: PAYROLL PERIODS ───────────────────────────────────────── */}
+      {/* ─── TAB 6: PAYROLL PERIODS ───────────────────────────────────────── */}
       {activeTab === "periods" && (
         <GlassCard className="p-5">
           <div className="flex justify-between items-center mb-4">

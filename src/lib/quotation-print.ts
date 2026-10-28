@@ -224,34 +224,34 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
-      .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
+      .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #1D5298;margin:8px 0;}
-      .subtitle{display:block;background:#d8e2f4;color:#09090b;font-size:13.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
-      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11.5px;color:#09090b;}
+      .subtitle{display:block;background:#d8e2f4;color:#09090b;font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
+      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:14px;color:#09090b;}
       .meta{display:flex;justify-content:space-between;gap:10mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
-      .to{font-size:10.5px;font-weight:600;color:#09090b;}
-      .cust-name{font-size:12.5px;font-weight:600;color:#09090b;margin-top:3px;}
+      .to{font-size:14px;font-weight:800;color:#09090b;}
+      .cust-name{font-size:14px;font-weight:800;color:#09090b;margin-top:3px;}
       .cust-addr{margin-top:2px;color:#18181b;}
       .cust-contact{margin-top:2px;color:#18181b;}
       .meta-r{flex:0 0 auto;min-width:78mm;}
-      .kv{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:1.5px 0;font-size:10.5px;page-break-inside:avoid;}
+      .kv{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:1.5px 0;font-size:12px;page-break-inside:avoid;}
       .kv .k{color:#18181b;white-space:nowrap;}
-      .kv .v{font-weight:600;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:#09090b;}
+      .kv .v{font-weight:800;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:#09090b;}
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:2px solid #3c3f42ff;padding:5px 6px;vertical-align:middle;}
-      table.items thead th{background:#d8e2f4;color:#09090b;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;color:#09090b;}
+      table.items thead th{background:#d8e2f4;color:#09090b;font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
+      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:800;font-size:14px;color:#09090b;}
       table.items tbody td{font-size:10.5px;color:#09090b;}
       table.items .ctr{text-align:center;}
       table.items .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
       .mono{font-variant-numeric:tabular-nums;}
-      .prod{font-weight:600;color:#09090b;}
-      .desc{font-size:9.5px;font-weight:400;color:#52525b;}
+      .prod{font-weight:800;color:#09090b;}
+      .desc{font-size:12px;font-weight:800;color:#52525b;}
       .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
       thead{display:table-header-group;}
-      tr.total-row td{background:#d8e2f4;font-weight:600;color:#09090b;}
+      tr.total-row td{background:#d8e2f4;font-weight:800;color:#09090b;}
       .lower{display:flex;justify-content:flex-end;margin-top:5mm;}
       /* Summary Box */
       .summary-col{display:flex;flex-direction:column;gap:3px;width:38%;min-width:60mm;max-width:96mm;page-break-inside:avoid;}

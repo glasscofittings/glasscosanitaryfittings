@@ -160,40 +160,40 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       .head{text-align:center;}
       .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #45484dff;margin:8px 0;}
-      .subtitle{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#09090b;}
+      .subtitle{font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#09090b;}
       .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;}
       .meta{display:flex;justify-content:space-between;gap:8mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
-      .party-head{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#09090b;border-bottom:1px solid #cbd5e1;padding-bottom:5px;margin-bottom:4px;}
+      .party-head{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#09090b;border-bottom:1px solid #cbd5e1;padding-bottom:5px;margin-bottom:4px;}
       .party-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;color:#09090b;}
       .meta-l .kv{padding:2px 0;}
-      .meta-l .kv .v{font-family:${SERIF_FONT_FAMILY_CSS};font-weight:600;white-space:normal;text-align:right;color:#09090b;word-break:break-word;}
-      .meta-l .kv .v.name{font-size:12px;font-weight:700;}
+      .meta-l .kv .v{font-family:${SERIF_FONT_FAMILY_CSS};font-weight:800;white-space:normal;text-align:right;color:#09090b;word-break:break-word;}
+      .meta-l .kv .v.name{font-size:14px;font-weight:800;}
       .meta-r{flex:0 0 auto;min-width:80mm;}
       .kv{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:1.5px 0;font-size:10.5px;page-break-inside:avoid;}
       .kv .k{color:#09090b;white-space:nowrap;}
       .kv .v{font-weight:700;text-align:right;white-space:nowrap;font-family:'Courier New',monospace;color:#09090b;}
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:1px solid #4170b3ff;padding:5px 6px;vertical-align:middle;}
-      table.items thead th{background:#e8eef7;color:#09090b;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:600;font-size:9px;}
-      table.items tbody td{font-size:10.5px;}
-      table.items .ctr{text-align:center;}
-      table.items .num{text-align:right;white-space:nowrap;font-family:'Courier New',monospace;}
+      table.items thead th{background:#e8eef7;color:#09090b;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
+      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:800;font-size:12px;}
+      table.items tbody td{font-size:14px;}
+      table.items .ctr{text-align:center, font-size:12px;}
+      table.items .num{text-align:right;white-space:nowrap;font-family:'Courier New',monospace, font-size:12px;}
       .mono{font-family:'Courier New',monospace;}
-      .acct{font-weight:600;color:#09090b;}
-      .desc{font-size:9.5px;color:#09090b;margin-top:1px;}
+      .acct{font-weight:800;color:#09090b;}
+      .desc{font-size:12px;color:#09090b;margin-top:1px;}
       .empty{text-align:center;color:#09090b;padding:14px 6px;}
       tr{page-break-inside:avoid;}
-      thead{display:table-header-group;}
-      tr.total-row td{background:#EBF3FA;font-weight:700;color:#09090b;}
+      thead{display:table-header-group}
+      tr.total-row td{background:#EBF3FA;font-weight:900;color:#09090b;}
       .words{margin-top:5mm;background:#e8eef7;border:1px solid #43474bff;padding:7px 12px;page-break-inside:avoid;}
-      .words-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#27292bff;}
+      .words-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:14px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#27292bff;}
       .words-head .ur{text-transform:none;letter-spacing:normal;font-size:10.5px;}
-      .words-en{font-size:11.5px;font-weight:700;color:#0f172a;margin-top:4px;}
-      .words .ur.words-ur{text-align:right;font-size:11.5px;margin-top:2px;color:#1e293b;}
+      .words-en{font-size:14px;font-weight:800;color:#0f172a;margin-top:4px;}
+      .words .ur.words-ur{text-align:right;font-size:14px;margin-top:2px;color:#1e293b;}
       .narration{margin-top:4mm;border:1px solid #cbd5e1;padding:7px 12px;page-break-inside:avoid;}
-      .nar-head{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#475569;}
+      .nar-head{font-size:14px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#475569;}
       .nar-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;}
       .nar-body{margin-top:4px;font-size:11px;color:#1e293b;white-space:pre-wrap;}
       /* Page foot = signatures + footer as one atomic block: bottom-anchored via
@@ -203,7 +203,7 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
          mid-block (break-inside: avoid). */
       .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
       .signatures{display:flex;padding-top:16px;border-top:1px solid #09090b;page-break-inside:avoid;}
-      .sig{flex:1;text-align:center;font-size:10.5px;font-weight:700;color:#0f172a;padding:0 6px;}
+      .sig{flex:1;text-align:center;font-size:12px;font-weight:800;color:#0f172a;padding:0 6px;}
       .sig .ur{text-align:center;font-weight:400;}
       .sig-name{margin-top:7px;font-size:10px;font-weight:400;color:#334155;border-top:1px dashed #94a3b8;display:inline-block;padding-top:3px;min-width:140px;}
       .footer{margin-top:12px;text-align:center;page-break-inside:avoid;}
