@@ -33,7 +33,10 @@ import {
   payPayrollItems,
   reversePayrollRun,
   fetchPayrollPaymentLogs,
+  fetchPayrollCrossLedgerTransactions,
+  fetchPayrollParties,
   buildEmployeeLedger,
+  type PayrollParty,
   type PayrollPeriod,
   type PayrollWageType,
   type PayrollRun,
@@ -69,6 +72,8 @@ export default function SAPPayrollPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [paymentLogs, setPaymentLogs] = useState<PayrollPaymentLog[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [parties, setParties] = useState<PayrollParty[]>([]);
+  const [crossLogs, setCrossLogs] = useState<PayrollPaymentLog[]>([]);
 
   // Cross-tab employee focus (Account Ledger ↔ Transaction History)
   const [ledgerFocus, setLedgerFocus] = useState<EmployeeFocus | null>(null);
@@ -330,10 +335,13 @@ export default function SAPPayrollPage() {
     );
   }, [accounts]);
 
-  // Employee-centric account ledger (head-wise employee accounts)
+  // Combined payroll runs & cross-ledger transaction logs
+  const allPaymentLogs = useMemo(() => [...paymentLogs, ...crossLogs], [paymentLogs, crossLogs]);
+
+  // Unified account ledger (employees, vendors, contractors & customers)
   const employeeLedger = useMemo(
-    () => buildEmployeeLedger(runs, paymentLogs, workers),
-    [runs, paymentLogs, workers]
+    () => buildEmployeeLedger(runs, allPaymentLogs, workers, parties, crossLogs),
+    [runs, allPaymentLogs, workers, parties, crossLogs]
   );
 
   // ─── Cross-tab navigation (Ledger ⇄ Transactions) ─────────────────────
@@ -395,7 +403,7 @@ export default function SAPPayrollPage() {
         {[
           { key: "runs", label: "Payroll Runs", icon: Layers, count: runs.length },
           { key: "ledger", label: "Account Ledger", icon: BookUser, count: employeeLedger.length },
-          { key: "transactions", label: "Transaction History", icon: ReceiptText, count: paymentLogs.length },
+          { key: "transactions", label: "Transaction History", icon: ReceiptText, count: allPaymentLogs.length },
           { key: "simulation", label: "Calculation Wizard", icon: Play },
           { key: "wage_types", label: "Wage Types (COA Mapping)", icon: FileText, count: wageTypes.length },
           { key: "periods", label: "Payroll Periods", icon: Calendar, count: periods.length },
@@ -649,7 +657,8 @@ export default function SAPPayrollPage() {
       {activeTab === "transactions" && (
         <TransactionHistory
           key={`txn-${txnFocus?.id ?? "all"}`}
-          logs={paymentLogs}
+          logs={allPaymentLogs}
+          allAccounts={employeeLedger}
           focusWorkerId={txnFocus?.id ?? null}
           focusWorkerName={txnFocus?.name ?? null}
           onOpenLedger={goToEmployeeLedger}

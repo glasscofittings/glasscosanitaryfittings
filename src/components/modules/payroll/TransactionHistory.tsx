@@ -13,11 +13,12 @@ import {
 import GlassCard from "@/components/ui/GlassCard";
 import { PayrollHeadBadge } from "./PayrollBadges";
 import { formatPKR } from "@/lib/utils/formatters";
-import { type PayrollPaymentLog } from "@/lib/supabase/payroll";
+import { type PayrollPaymentLog, type EmployeeLedgerAccount } from "@/lib/supabase/payroll";
 
 interface TransactionHistoryProps {
   logs: PayrollPaymentLog[];
-  /** Pre-select this employee when navigating from the Account Ledger. */
+  allAccounts?: EmployeeLedgerAccount[];
+  /** Pre-select this employee or party when navigating from the Account Ledger. */
   focusWorkerId?: string | null;
   focusWorkerName?: string | null;
   /** Jump back to the Account Ledger focused on this employee. */
@@ -34,6 +35,7 @@ function formatDate(date: string): string {
 
 export default function TransactionHistory({
   logs,
+  allAccounts = [],
   focusWorkerId,
   focusWorkerName,
   onOpenLedger,
@@ -46,29 +48,44 @@ export default function TransactionHistory({
   const [headFilter, setHeadFilter] = useState<"ALL" | "PRODUCTION" | "ADMIN">("ALL");
   const [employeeFilter, setEmployeeFilter] = useState<string>(focusWorkerId ?? "ALL");
 
-  // Distinct employees present in the transaction log
+  // Distinct accounts (employees, vendors, and customers)
   const employees = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, { id: string; name: string; type?: string }>();
     for (const log of logs) {
       const id = log.item?.worker_id;
       const name = log.item?.worker_name;
-      if (id && name && !map.has(id)) map.set(id, name);
+      if (id && name && !map.has(id)) {
+        map.set(id, { id, name, type: log.item?.cost_class });
+      }
     }
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [logs]);
+    for (const acc of allAccounts) {
+      if (acc.workerId && !map.has(acc.workerId)) {
+        map.set(acc.workerId, { id: acc.workerId, name: acc.workerName, type: acc.entityType });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [logs, allAccounts]);
 
   // Chronological (newest first) filtering
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const selAcc = employeeFilter !== "ALL" ? employees.find((e) => e.id === employeeFilter) : null;
+    const selNameLower = selAcc?.name.toLowerCase().trim();
+
     return logs
       .filter((log) => {
         if (methodFilter !== "ALL" && log.payment_method !== methodFilter) return false;
         if (headFilter !== "ALL" && log.item?.cost_class !== headFilter) return false;
-        if (employeeFilter !== "ALL" && log.item?.worker_id !== employeeFilter) return false;
+        if (employeeFilter !== "ALL") {
+          const matchId = log.item?.worker_id === employeeFilter;
+          const matchName = selNameLower && log.item?.worker_name?.toLowerCase().trim() === selNameLower;
+          if (!matchId && !matchName) return false;
+        }
         if (!q) return true;
         return [
           log.item?.worker_name,
           log.disbursement_batch_no,
+          log.reference_no,
           log.run?.run_no,
           log.run?.period?.period_code,
           log.payment_account?.account_name,
@@ -84,7 +101,7 @@ export default function TransactionHistory({
           (b.payment_date || "").localeCompare(a.payment_date || "") ||
           (b.created_at || "").localeCompare(a.created_at || "")
       );
-  }, [logs, search, methodFilter, headFilter, employeeFilter]);
+  }, [logs, search, methodFilter, headFilter, employeeFilter, employees]);
 
   const totals = useMemo(() => {
     const amount = filtered.reduce((s, l) => s + Number(l.amount || 0), 0);
@@ -97,7 +114,7 @@ export default function TransactionHistory({
 
   const focusedName =
     employeeFilter !== "ALL"
-      ? employees.find(([id]) => id === employeeFilter)?.[1] ?? focusWorkerName ?? null
+      ? employees.find((e) => e.id === employeeFilter)?.name ?? focusWorkerName ?? null
       : null;
 
   const summaryCards = [
@@ -193,12 +210,12 @@ export default function TransactionHistory({
             <select
               value={employeeFilter}
               onChange={(e) => setEmployeeFilter(e.target.value)}
-              className={`${selectClass} md:w-52`}
+              className={`${selectClass} md:w-56`}
             >
-              <option value="ALL">All Employees</option>
-              {employees.map(([id, name]) => (
-                <option key={id} value={id}>
-                  {name}
+              <option value="ALL">All Accounts (Employees & Parties)</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name} {emp.type ? `(${emp.type})` : ""}
                 </option>
               ))}
             </select>
@@ -281,6 +298,11 @@ export default function TransactionHistory({
                       <p className="font-mono font-bold text-foreground">
                         {log.disbursement_batch_no || "—"}
                       </p>
+                      {log.reference_no && (
+                        <p className="text-[10px] text-crimson-primary font-mono font-medium">
+                          Ref: {log.reference_no}
+                        </p>
+                      )}
                       <p className="text-[11px] text-muted font-mono">
                         {log.run?.run_no ? `Run ${log.run.run_no}` : ""}
                         {log.run?.period?.period_code ? ` · ${log.run.period.period_code}` : ""}

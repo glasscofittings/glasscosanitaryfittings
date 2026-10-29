@@ -75,7 +75,19 @@ export default function InvoicesTable({ invoices, onPost, onView, onEdit, onDele
                   <td className="px-4 py-3">
                     <span className="font-mono text-num-code text-secondary whitespace-nowrap">{inv.invoice_number}</span>
                   </td>
-                  <td className="px-4 py-3 text-body text-foreground truncate">{inv.parties?.name ?? "—"}</td>
+                  <td className="px-4 py-3 text-body text-foreground truncate" onClick={(e) => inv.parties?.id && e.stopPropagation()}>
+                    {inv.parties ? (
+                      <a
+                        href={'/crm?id=' + inv.parties.id}
+                        title="View Customer Account Profile"
+                        className="text-foreground hover:text-crimson-primary hover:underline font-medium transition-colors"
+                      >
+                        {inv.parties.name}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-caption text-secondary truncate max-w-[200px]" title={products.full}>
                     {products.label}
                     {products.extra > 0 && (

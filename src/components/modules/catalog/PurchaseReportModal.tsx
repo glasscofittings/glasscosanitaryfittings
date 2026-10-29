@@ -216,7 +216,17 @@ export default function PurchaseReportModal({
                     className="border-t border-border-subtle hover:bg-neutral-800/20"
                   >
                     <td className="px-3 py-2">
-                      <div className="font-semibold text-foreground">{r.group_label}</div>
+                      {groupBy === "supplier" ? (
+                        <a
+                          href={'/crm?search=' + encodeURIComponent(r.group_label)}
+                          title="View Supplier Account Profile & Ledger"
+                          className="font-semibold text-foreground hover:text-crimson-primary hover:underline transition-colors"
+                        >
+                          {r.group_label}
+                        </a>
+                      ) : (
+                        <div className="font-semibold text-foreground">{r.group_label}</div>
+                      )}
                       {r.sku && <div className="text-[10px] text-muted font-mono">{r.sku}</div>}
                     </td>
                     <td className="px-3 py-2 text-secondary">

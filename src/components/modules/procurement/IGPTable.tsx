@@ -554,7 +554,19 @@ export default function IGPTable({ igps: initialIgps, parties = [], onConverted,
                         <span className="font-mono text-num-code text-secondary">{igp.igp_code}</span>
                       </td>
                       <td className="px-5 py-3 text-body text-foreground truncate">{igp.material_description}</td>
-                      <td className="px-5 py-3 text-body text-secondary">{igp.parties?.name ?? "—"}</td>
+                      <td className="px-5 py-3 text-body text-secondary">
+                        {igp.parties ? (
+                          <a
+                            href={'/crm?id=' + igp.parties.id}
+                            title="View Vendor Account Profile"
+                            className="text-secondary hover:text-crimson-primary hover:underline font-medium transition-colors"
+                          >
+                            {igp.parties.name}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       {/* Rejected Qty (replaces Lot #) */}
                       <td className="px-5 py-3 text-right font-mono text-num-table">
                         {rejectedQty > 0 ? (

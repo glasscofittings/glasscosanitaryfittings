@@ -637,9 +637,24 @@ export interface EmployeeLedgerMonth {
   isLegacy: boolean;
 }
 
+export type PayrollEntityType = "EMPLOYEE" | "VENDOR" | "CUSTOMER" | "BOTH" | "CONTRACTOR";
+
+export interface PayrollParty {
+  id: string;
+  name: string;
+  party_type: "SUPPLIER" | "CUSTOMER" | "BOTH" | "VENDOR";
+  phone?: string;
+  email?: string;
+  address?: string;
+  opening_balance?: number;
+  opening_balance_type?: "Dr" | "Cr";
+}
+
 export interface EmployeeLedgerAccount {
   workerId: string;
+  partyId?: string | null;
   workerName: string;
+  entityType?: PayrollEntityType;
   costClass: PayrollCostClass;
   employmentType: string;
   roleDesignation: string | null;
@@ -658,29 +673,48 @@ export interface EmployeeLedgerAccount {
   months: EmployeeLedgerMonth[];
 }
 
-/**
- * Aggregates payroll runs + payment logs + worker profiles into an
- * employee-centric account ledger: one account per worker with a
- * month-by-month paid vs pending breakdown.
- *
- * Reversed (storno) runs are voided and excluded from ledger balances.
- */
 export function buildEmployeeLedger(
   runs: PayrollRun[],
   paymentLogs: PayrollPaymentLog[] = [],
-  workers: Worker[] = []
+  workers: Worker[] = [],
+  parties: PayrollParty[] = [],
+  crossLedgerLogs: PayrollPaymentLog[] = []
 ): EmployeeLedgerAccount[] {
-  // Latest payment date per payroll run item
+  // Combine payment logs
+  const allLogs = [...paymentLogs, ...crossLedgerLogs];
+
+  // Latest payment date per payroll run item or voucher
   const lastPaymentByItem = new Map<string, string>();
-  for (const log of paymentLogs) {
+  for (const log of allLogs) {
     if (!log.item_id || !log.payment_date) continue;
     const prev = lastPaymentByItem.get(log.item_id);
     if (!prev || log.payment_date > prev) lastPaymentByItem.set(log.item_id, log.payment_date);
   }
 
   const workerById = new Map<string, Worker>(workers.map((w) => [w.id, w]));
+  const partyByName = new Map<string, PayrollParty>();
+  const partyById = new Map<string, PayrollParty>();
+  for (const p of parties) {
+    partyById.set(p.id, p);
+    partyByName.set(p.name.toLowerCase().trim(), p);
+  }
+
   const accounts = new Map<string, EmployeeLedgerAccount>();
 
+  const getEntityType = (name: string, worker?: Worker, party?: PayrollParty): PayrollEntityType => {
+    if (party) {
+      if (party.party_type === "CUSTOMER") return "CUSTOMER";
+      if (party.party_type === "SUPPLIER" || party.party_type === "VENDOR") return "VENDOR";
+      if (party.party_type === "BOTH") return "BOTH";
+    }
+    const lower = name.toLowerCase();
+    if (lower.includes("team") || lower.includes("crew") || lower.includes("works") || lower.includes("industries")) {
+      return "CONTRACTOR";
+    }
+    return "EMPLOYEE";
+  };
+
+  // 1. Process regular payroll runs
   for (const run of runs) {
     if (run.status === "REVERSED") continue; // voided via storno — exclude from balances
     const periodCode = run.period?.period_code || "—";
@@ -694,18 +728,23 @@ export function buildEmployeeLedger(
       let acc = accounts.get(key);
       if (!acc) {
         const w = workerById.get(item.worker_id);
+        const p = partyByName.get((item.worker_name || "").toLowerCase().trim()) || (w ? partyByName.get(w.full_name.toLowerCase().trim()) : undefined);
+        const entityType = getEntityType(item.worker_name, w, p);
+
         acc = {
           workerId: item.worker_id,
+          partyId: p?.id ?? null,
           workerName: item.worker_name || w?.full_name || "Unknown Employee",
+          entityType,
           costClass: item.cost_class || w?.cost_class || "ADMIN",
-          employmentType: item.employment_type || w?.employment_type || "—",
-          roleDesignation: w?.role_designation ?? null,
-          isActive: w?.is_active ?? null,
+          employmentType: item.employment_type || w?.employment_type || (entityType === "EMPLOYEE" ? "PERMANENT_SALARY" : entityType),
+          roleDesignation: w?.role_designation ?? (p ? `${p.party_type} Account` : null),
+          isActive: w?.is_active ?? true,
           paymentProfile: {
             defaultMethod: w?.default_pay_method ?? null,
             bankName: w?.bank_name ?? null,
             accountIban: w?.account_iban ?? null,
-            cnic: w?.cnic_no ?? null,
+            cnic: w?.cnic_no ?? p?.phone ?? null,
           },
           totalNetPay: 0,
           totalPaid: 0,
@@ -738,6 +777,112 @@ export function buildEmployeeLedger(
         status,
         lastPaymentDate: lastPaymentByItem.get(item.id) ?? null,
         isLegacy: run.run_type === "LEGACY",
+      });
+    }
+  }
+
+  // 2. Map cross-ledger logs (receipts, payment vouchers) to accounts
+  for (const log of crossLedgerLogs) {
+    const workerId = log.item?.worker_id;
+    const workerName = log.item?.worker_name;
+    if (!workerId && !workerName) continue;
+
+    const key = workerId || workerName!;
+    let acc = accounts.get(key);
+    if (!acc) {
+      const p = (workerId ? partyById.get(workerId) : undefined) || (workerName ? partyByName.get(workerName.toLowerCase().trim()) : undefined);
+      const w = workerId ? workerById.get(workerId) : undefined;
+      const name = workerName || p?.name || w?.full_name || "Account";
+      const entityType = getEntityType(name, w, p);
+
+      acc = {
+        workerId: p?.id || w?.id || key,
+        partyId: p?.id ?? null,
+        workerName: name,
+        entityType,
+        costClass: "ADMIN",
+        employmentType: entityType,
+        roleDesignation: p ? `${p.party_type} Account` : "Cross-Ledger Account",
+        isActive: true,
+        paymentProfile: {
+          defaultMethod: log.payment_method || null,
+          bankName: null,
+          accountIban: null,
+          cnic: p?.phone || null,
+        },
+        totalNetPay: 0,
+        totalPaid: 0,
+        totalPending: 0,
+        status: "PAID",
+        lastPaymentDate: log.payment_date,
+        months: [],
+      };
+      accounts.set(key, acc);
+    }
+
+    const logAmt = round2(Number(log.amount) || 0);
+    acc.months.push({
+      runId: log.id,
+      runNo: log.disbursement_batch_no || "CRV",
+      periodCode: log.run?.period?.period_code || "CROSS-LEDGER",
+      periodStart: log.payment_date,
+      periodEnd: log.payment_date,
+      costClass: "ADMIN",
+      grossEarnings: logAmt,
+      totalDeductions: 0,
+      netPay: logAmt,
+      amountPaid: logAmt,
+      pendingAmount: 0,
+      status: "PAID",
+      lastPaymentDate: log.payment_date,
+      isLegacy: false,
+    });
+  }
+
+  // 3. Include all other parties (vendors, suppliers, customers, e.g. Faisal Sb,) that are not yet in accounts
+  for (const p of parties) {
+    const key = p.id;
+    const nameKey = p.name.toLowerCase().trim();
+    const alreadyExists = accounts.has(key) || [...accounts.values()].some(a => a.workerName.toLowerCase().trim() === nameKey);
+    if (!alreadyExists) {
+      const entityType: PayrollEntityType = p.party_type === "CUSTOMER" ? "CUSTOMER" : p.party_type === "BOTH" ? "BOTH" : "VENDOR";
+      const opening = Math.abs(Number(p.opening_balance) || 0);
+      accounts.set(key, {
+        workerId: p.id,
+        partyId: p.id,
+        workerName: p.name,
+        entityType,
+        costClass: "ADMIN",
+        employmentType: entityType,
+        roleDesignation: `${p.party_type} Account`,
+        isActive: true,
+        paymentProfile: {
+          defaultMethod: null,
+          bankName: null,
+          accountIban: null,
+          cnic: p.phone || null,
+        },
+        totalNetPay: opening,
+        totalPaid: 0,
+        totalPending: opening,
+        status: opening > 0 ? "PENDING" : "PAID",
+        lastPaymentDate: null,
+        months: opening > 0 ? [{
+          runId: `ob-${p.id}`,
+          runNo: "OPENING",
+          periodCode: "OPENING-BAL",
+          periodStart: "2026-01-01",
+          periodEnd: "2026-01-01",
+          costClass: "ADMIN",
+          grossEarnings: opening,
+          totalDeductions: 0,
+          netPay: opening,
+          amountPaid: 0,
+          pendingAmount: opening,
+          status: "PENDING",
+          lastPaymentDate: null,
+          isLegacy: false,
+        }] : [],
       });
     }
   }
@@ -892,3 +1037,137 @@ export async function deletePayrollEntry(id: string): Promise<{ error: string | 
   return { error: "Direct deletion is disabled. Use Storno Reversal on the payroll run." };
 }
 
+
+/** Fetches customer receipt vouchers and payment vouchers for cross-ledger payroll mapping. */
+export async function fetchPayrollCrossLedgerTransactions(): Promise<PayrollPaymentLog[]> {
+  if (!SUPABASE_URL) return [];
+  try {
+    const [receiptsRes, vouchersRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/customer_receipt_vouchers?status=eq.POSTED&select=*&order=receipt_date.desc`, { headers: headers() }),
+      fetch(`${SUPABASE_URL}/rest/v1/payment_vouchers?select=*&order=voucher_date.desc`, { headers: headers() }),
+    ]);
+
+    const crvs = receiptsRes.ok ? await receiptsRes.json() : [];
+    const pvs = vouchersRes.ok ? await vouchersRes.json() : [];
+
+    const logs: PayrollPaymentLog[] = [];
+
+    // Map customer receipt vouchers
+    for (const r of (Array.isArray(crvs) ? crvs : [])) {
+      logs.push({
+        id: r.id,
+        run_id: "cross-ledger-crv",
+        item_id: r.id,
+        amount: Number(r.amount) || 0,
+        payment_method: r.payment_mode === "BANK" ? "BANK" : "CASH",
+        payment_account_id: r.bank_account_id || "",
+        payment_date: r.receipt_date || r.created_at?.slice(0, 10),
+        disbursement_batch_no: r.voucher_no,
+        reference_no: r.reference_no,
+        notes: r.remarks || "Customer Receipt / Cross-Ledger Settlement",
+        operator_name: "Accounts Dept",
+        created_at: r.created_at,
+        item: {
+          id: r.id,
+          run_id: "cross-ledger-crv",
+          worker_id: r.customer_id,
+          worker_name: r.customer_name || "Customer",
+          cost_class: "ADMIN",
+          employment_type: "CUSTOMER",
+          days_in_period: 0,
+          present_days: 0,
+          absent_days: 0,
+          leave_days: 0,
+          overtime_minutes: 0,
+          undertime_minutes: 0,
+          basic_rate: 0,
+          gross_earnings: Number(r.amount) || 0,
+          total_deductions: 0,
+          net_pay: Number(r.amount) || 0,
+          amount_paid: Number(r.amount) || 0,
+          status: "PAID",
+          created_at: r.created_at,
+        },
+        run: {
+          id: "cross-ledger-crv",
+          run_no: "CRV",
+          status: "PAID",
+          period: {
+            period_code: "RECEIPT",
+            start_date: r.receipt_date,
+            end_date: r.receipt_date,
+          },
+        },
+      });
+    }
+
+    // Map payment vouchers (salary payments, contractor draws, vendor settlements)
+    for (const pv of (Array.isArray(pvs) ? pvs : [])) {
+      logs.push({
+        id: pv.id,
+        run_id: "cross-ledger-pv",
+        item_id: pv.id,
+        amount: Number(pv.amount) || 0,
+        payment_method: pv.voucher_type?.includes("BANK") ? "BANK" : "CASH",
+        payment_account_id: pv.credit_account_id || "",
+        payment_date: pv.voucher_date || pv.created_at?.slice(0, 10),
+        disbursement_batch_no: pv.voucher_no,
+        reference_no: pv.reference_no,
+        notes: pv.purpose || pv.remarks || `Voucher ${pv.voucher_type}`,
+        operator_name: pv.created_by || "Accounts Dept",
+        created_at: pv.created_at,
+        item: {
+          id: pv.id,
+          run_id: "cross-ledger-pv",
+          worker_id: pv.id,
+          worker_name: pv.payee_name || "Payee",
+          cost_class: "ADMIN",
+          employment_type: pv.voucher_type || "VENDOR",
+          days_in_period: 0,
+          present_days: 0,
+          absent_days: 0,
+          leave_days: 0,
+          overtime_minutes: 0,
+          undertime_minutes: 0,
+          basic_rate: 0,
+          gross_earnings: Number(pv.amount) || 0,
+          total_deductions: 0,
+          net_pay: Number(pv.amount) || 0,
+          amount_paid: Number(pv.amount) || 0,
+          status: "PAID",
+          created_at: pv.created_at,
+        },
+        run: {
+          id: "cross-ledger-pv",
+          run_no: "CPV",
+          status: "PAID",
+          period: {
+            period_code: "VOUCHER",
+            start_date: pv.voucher_date,
+            end_date: pv.voucher_date,
+          },
+        },
+      });
+    }
+
+    return logs;
+  } catch (err) {
+    console.error("fetchPayrollCrossLedgerTransactions error:", err);
+    return [];
+  }
+}
+
+/** Fetches all parties for payroll ledger mapping. */
+export async function fetchPayrollParties(): Promise<PayrollParty[]> {
+  if (!SUPABASE_URL) return [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/parties?select=id,name,party_type,phone,email,address,opening_balance,opening_balance_type&order=name.asc`, {
+      headers: headers(),
+    });
+    if (!res.ok) return [];
+    return (await res.json()) as PayrollParty[];
+  } catch (err) {
+    console.error("fetchPayrollParties error:", err);
+    return [];
+  }
+}

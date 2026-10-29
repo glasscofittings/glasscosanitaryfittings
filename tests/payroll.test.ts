@@ -417,4 +417,76 @@ describe("Employee Account Ledger (head-wise view) Tests", () => {
     assert.equal(ledger[1].workerId, "w-tariq");
     assert.equal(ledger[2].workerId, "w-sara");
   });
+
+  it("10. Includes vendors, suppliers and customers with cross-ledger vouchers in payroll accounts", () => {
+    const dummyParties = [
+      {
+        id: "party-faisal",
+        name: "Faisal Sb,",
+        party_type: "CUSTOMER" as const,
+        phone: "03001234567",
+        opening_balance: 5000,
+        opening_balance_type: "Dr" as const,
+      },
+      {
+        id: "party-vendor-master",
+        name: "Master Sanitary Industries",
+        party_type: "SUPPLIER" as const,
+        phone: "03217654321",
+        opening_balance: 15000,
+        opening_balance_type: "Cr" as const,
+      },
+    ];
+
+    const dummyCrossLogs: PayrollPaymentLog[] = [
+      {
+        id: "crv-1",
+        run_id: "cross-crv",
+        item_id: "crv-item-1",
+        amount: 25000,
+        payment_method: "CASH",
+        payment_account_id: "acc-cash",
+        payment_date: "2026-10-22",
+        disbursement_batch_no: "CRV-2026-712795",
+        notes: "Customer Receipt / Settlement",
+        created_at: "2026-10-22T00:00:00.000Z",
+        item: {
+          id: "crv-item-1",
+          run_id: "cross-crv",
+          worker_id: "party-faisal",
+          worker_name: "Faisal Sb,",
+          cost_class: "ADMIN",
+          employment_type: "CUSTOMER",
+          days_in_period: 0,
+          present_days: 0,
+          absent_days: 0,
+          leave_days: 0,
+          overtime_minutes: 0,
+          undertime_minutes: 0,
+          basic_rate: 0,
+          gross_earnings: 25000,
+          total_deductions: 0,
+          net_pay: 25000,
+          amount_paid: 25000,
+          status: "PAID",
+          created_at: "2026-10-22",
+        },
+      },
+    ];
+
+    const fullLedger = buildEmployeeLedger([runSep, runOct], paymentLogs, ledgerWorkers, dummyParties, dummyCrossLogs);
+
+    // Both employees and parties must be in the ledger
+    const faisal = fullLedger.find((a) => a.workerId === "party-faisal");
+    assert.ok(faisal, "Faisal Sb, must be included in the payroll ledger");
+    assert.equal(faisal.entityType, "CUSTOMER");
+    assert.equal(faisal.totalPaid, 25000);
+    assert.equal(faisal.months.length, 1);
+    assert.equal(faisal.months[0].runNo, "CRV-2026-712795");
+
+    const master = fullLedger.find((a) => a.workerId === "party-vendor-master");
+    assert.ok(master, "Master Sanitary Industries must be included in the payroll ledger");
+    assert.equal(master.entityType, "VENDOR");
+    assert.equal(master.totalPending, 15000);
+  });
 });

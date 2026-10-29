@@ -43,6 +43,43 @@ export interface Party {
 // PartyLedgerEntry / PartyLedgerDocType / PartySideTotals are defined in
 // "@/lib/party-statement" (party-type-aware presentation) and re-exported above.
 
+/** A product purchase row as fetched from `product_purchases` (supplier-side). */
+export interface PartyProductPurchase {
+  id: string;
+  purchase_number: string;
+  purchase_date: string;
+  product_name: string;
+  sku: string;
+  quantity: number;
+  unit_of_measure: string;
+  purchase_rate: number;
+  purchase_total_pkr: number;
+  status: "draft" | "confirmed" | "cancelled";
+  notes: string | null;
+}
+
+/** A sales invoice row for the customer tab. */
+export interface PartySalesInvoice {
+  id: string;
+  invoice_number: string;
+  taxable_value_pkr: number;
+  sales_tax_amount_pkr: number;
+  total_invoice_value_pkr: number;
+  is_posted: boolean;
+  created_at: string;
+}
+
+/** A payment/receipt row for the payments tab. */
+export interface PartyPaymentRow {
+  id: string;
+  voucher_no: string;
+  date: string;
+  amount: number;
+  payment_mode: string;
+  reference_no: string | null;
+  kind: "RECEIPT" | "PAYMENT";
+}
+
 export interface PartyDetail extends Party {
   /** Legacy top-level totals = the party's primary side (CUSTOMER->buy, SUPPLIER->sell, BOTH->buy). */
   total_invoices: number;
@@ -56,6 +93,10 @@ export interface PartyDetail extends Party {
   sides: { buy?: PartySideTotals; sell?: PartySideTotals };
   /** Signed closing balance: positive = Dr (receivable), negative = Cr (payable). */
   closing_balance: number;
+  /** Raw document arrays for the tabbed detail drawer. */
+  salesInvoices: PartySalesInvoice[];
+  productPurchases: PartyProductPurchase[];
+  payments: PartyPaymentRow[];
 }
 
 export interface PartyInvoice {
@@ -249,7 +290,7 @@ export async function fetchPartyDetails(partyId: string): Promise<PartyDetail | 
     const isBuyer = party.party_type === "CUSTOMER" || party.party_type === "BOTH";
     const isSupplier = party.party_type === "SUPPLIER" || party.party_type === "BOTH";
 
-    const [salesRes, receiptsRes, purchaseRes, vouchers] = await Promise.all([
+    const [salesRes, receiptsRes, purchaseRes, productPurchaseRes, vouchers] = await Promise.all([
       isBuyer
         ? fetchRest(
             `${SUPABASE_URL}/rest/v1/sales_invoices?customer_id=eq.${partyId}&select=id,invoice_number,taxable_value_pkr,sales_tax_amount_pkr,further_tax_amount_pkr,total_invoice_value_pkr,is_posted,created_at&order=created_at.asc`,
@@ -268,12 +309,20 @@ export async function fetchPartyDetails(partyId: string): Promise<PartyDetail | 
             "crm purchase_invoices"
           )
         : Promise.resolve([]),
+      // Product purchases — fetched for suppliers by party id first, supplier name as fallback
+      isSupplier
+        ? fetchRest(
+            `${SUPABASE_URL}/rest/v1/product_purchases?supplier_id=eq.${partyId}&status=in.(draft,confirmed)&select=id,purchase_number,purchase_date,product_name,sku,quantity,unit_of_measure,purchase_rate,purchase_total_pkr,status,notes&order=purchase_date.asc`,
+            "crm product_purchases"
+          )
+        : Promise.resolve([]),
       fetchPartyPaymentVouchers(party.name),
     ]);
 
     const sales = (Array.isArray(salesRes) ? salesRes : []) as PartyInvoice[];
     const receipts = (Array.isArray(receiptsRes) ? receiptsRes : []) as ReceiptRow[];
     const purchases = (Array.isArray(purchaseRes) ? purchaseRes : []) as PurchaseInvoiceRow[];
+    const productPurchases = (Array.isArray(productPurchaseRes) ? productPurchaseRes : []) as PartyProductPurchase[];
 
     // Payment vouchers have no party_id; matched by payee_name in fetchPartyPaymentVouchers.
     // Side rule: a voucher to a supplier-ish party sits on the sell (AP) side; a voucher to a
@@ -318,6 +367,23 @@ export async function fetchPartyDetails(partyId: string): Promise<PartyDetail | 
         "sell",
         "PURCHASE_INVOICE",
         num(pinv.total_payable)
+      );
+    }
+
+    // Product-level purchases (from product_purchases table) — only confirmed ones
+    // carry real value; drafts are shown in the tab but not posted to the ledger.
+    for (const pp of productPurchases) {
+      if (pp.status !== "confirmed") continue;
+      push(
+        {
+          id: pp.id,
+          date: pp.purchase_date,
+          doc_no: pp.purchase_number,
+          remarks: `Product Purchase - ${pp.product_name} (${pp.quantity} ${pp.unit_of_measure}) @ ${pp.purchase_rate}/unit`,
+        },
+        "sell",
+        "PURCHASE_INVOICE",
+        num(pp.purchase_total_pkr)
       );
     }
 
@@ -388,6 +454,37 @@ export async function fetchPartyDetails(partyId: string): Promise<PartyDetail | 
       sides,
       /** Signed closing balance of the combined statement: positive = Dr, negative = Cr. */
       closing_balance: ledger.length ? ledger[ledger.length - 1].balance : partySignedOpeningBalance(party),
+      // Raw arrays for the tabbed detail drawer
+      salesInvoices: sales.map((inv) => ({
+        id: inv.id,
+        invoice_number: inv.invoice_number,
+        taxable_value_pkr: num(inv.taxable_value_pkr),
+        sales_tax_amount_pkr: num(inv.sales_tax_amount_pkr),
+        total_invoice_value_pkr: num(inv.total_invoice_value_pkr),
+        is_posted: Boolean(inv.is_posted),
+        created_at: inv.created_at,
+      })) as PartySalesInvoice[],
+      productPurchases,
+      payments: [
+        ...receipts.map((r) => ({
+          id: r.id,
+          voucher_no: r.voucher_no,
+          date: r.receipt_date,
+          amount: num(r.amount),
+          payment_mode: r.payment_mode,
+          reference_no: r.reference_no,
+          kind: "RECEIPT" as const,
+        })),
+        ...vouchers.map((v) => ({
+          id: v.id,
+          voucher_no: v.voucher_no,
+          date: v.voucher_date,
+          amount: num(v.amount),
+          payment_mode: String(v.voucher_type ?? "PAYMENT"),
+          reference_no: v.reference_no ?? null,
+          kind: "PAYMENT" as const,
+        })),
+      ].sort((a, b) => a.date.localeCompare(b.date)) as PartyPaymentRow[],
     };
   } catch (err) {
     console.error("Supabase Error [crm fetchPartyDetails]:", err instanceof Error ? err.message : err);

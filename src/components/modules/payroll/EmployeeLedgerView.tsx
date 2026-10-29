@@ -1,5 +1,21 @@
 "use client";
 
+function EntityBadge({ type }: { type?: string }) {
+  if (type === "CUSTOMER") {
+    return <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">Customer</span>;
+  }
+  if (type === "VENDOR") {
+    return <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/25">Vendor / Supplier</span>;
+  }
+  if (type === "CONTRACTOR") {
+    return <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/25">Contractor</span>;
+  }
+  if (type === "BOTH") {
+    return <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-purple-500/15 text-purple-400 border border-purple-500/25">Vendor & Customer</span>;
+  }
+  return <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/25">Employee</span>;
+}
+
 import React, { useMemo, useState } from "react";
 import {
   ChevronDown,
@@ -54,17 +70,39 @@ export default function EmployeeLedgerView({
   // whenever the focused employee changes.
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(focusWorkerId ?? null);
+  const [entityFilter, setEntityFilter] = useState<"ALL" | "EMPLOYEE" | "VENDOR" | "CUSTOMER">("ALL");
+
+  const entityCounts = useMemo(() => {
+    let emp = 0;
+    let ven = 0;
+    let cust = 0;
+    for (const a of ledger) {
+      const ent = a.entityType || "EMPLOYEE";
+      if (ent === "EMPLOYEE") emp++;
+      else if (ent === "VENDOR" || ent === "CONTRACTOR") ven++;
+      else if (ent === "CUSTOMER" || ent === "BOTH") cust++;
+    }
+    return { all: ledger.length, emp, ven, cust };
+  }, [ledger]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return ledger;
-    return ledger.filter(
-      (a) =>
+    return ledger.filter((a) => {
+      if (entityFilter !== "ALL") {
+        const ent = a.entityType || "EMPLOYEE";
+        if (entityFilter === "EMPLOYEE" && ent !== "EMPLOYEE") return false;
+        if (entityFilter === "VENDOR" && ent !== "VENDOR" && ent !== "CONTRACTOR") return false;
+        if (entityFilter === "CUSTOMER" && ent !== "CUSTOMER" && ent !== "BOTH") return false;
+      }
+      if (!q) return true;
+      return (
         a.workerName.toLowerCase().includes(q) ||
         (a.roleDesignation ?? "").toLowerCase().includes(q) ||
+        (a.entityType ?? "").toLowerCase().includes(q) ||
         (a.paymentProfile.bankName ?? "").toLowerCase().includes(q)
-    );
-  }, [ledger, search]);
+      );
+    });
+  }, [ledger, search, entityFilter]);
 
   const totals = useMemo(() => {
     const net = ledger.reduce((s, a) => s + a.totalNetPay, 0);
@@ -137,15 +175,39 @@ export default function EmployeeLedgerView({
               Head-wise employee accounts — click an employee for the month-by-month paid vs pending breakdown
             </p>
           </div>
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search employee, role, bank..."
-              className="h-9 pl-9 pr-3 w-full md:w-64 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption placeholder:text-muted"
-            />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            {/* Entity filter tabs */}
+            <div className="flex items-center gap-1 p-0.5 rounded-lg bg-bg-muted border border-border-subtle self-start">
+              {(["ALL", "EMPLOYEE", "VENDOR", "CUSTOMER"] as const).map((tab) => {
+                const count = tab === "ALL" ? entityCounts.all : tab === "EMPLOYEE" ? entityCounts.emp : tab === "VENDOR" ? entityCounts.ven : entityCounts.cust;
+                const label = tab === "ALL" ? "All" : tab === "EMPLOYEE" ? "Employees" : tab === "VENDOR" ? "Vendors" : "Customers";
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setEntityFilter(tab)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                      entityFilter === tab
+                        ? "bg-crimson-primary text-white font-semibold"
+                        : "text-secondary hover:text-foreground"
+                    }`}
+                  >
+                    {label}
+                    <span className="text-[9px] px-1 rounded-full bg-black/20 font-mono">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search employee, vendor, customer, role..."
+                className="h-9 pl-9 pr-3 w-full sm:w-64 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption placeholder:text-muted"
+              />
+            </div>
           </div>
         </div>
 
@@ -203,6 +265,7 @@ export default function EmployeeLedgerView({
                             <div className="min-w-0">
                               <p className="font-semibold text-foreground truncate flex items-center gap-1.5">
                                 {acc.workerName}
+                                <EntityBadge type={acc.entityType} />
                                 {acc.isActive === false && (
                                   <span className="text-[9px] px-1.5 py-px rounded bg-muted/10 text-muted border border-border-subtle font-semibold">
                                     INACTIVE

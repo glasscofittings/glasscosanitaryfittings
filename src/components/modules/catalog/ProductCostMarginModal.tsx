@@ -343,7 +343,13 @@ export default function ProductCostMarginModal({
                     {supplierComparisons.map((s, idx) => (
                       <tr key={idx} className="hover:bg-neutral-800/20">
                         <td className="py-2.5 px-3 font-medium text-foreground flex items-center gap-1.5">
-                          <span>{s.supplier_name}</span>
+                          <a
+                            href={s.supplier_id ? '/crm?id=' + s.supplier_id : '/crm?search=' + encodeURIComponent(s.supplier_name)}
+                            title="View Supplier Account Profile & Ledger"
+                            className="hover:text-crimson-primary hover:underline transition-colors cursor-pointer"
+                          >
+                            {s.supplier_name}
+                          </a>
                           {s.is_best_price && (
                             <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                               Best Price
@@ -418,7 +424,13 @@ export default function ProductCostMarginModal({
                           {new Date(p.purchase_date).toLocaleDateString()}
                         </td>
                         <td className="py-2 px-3 text-foreground truncate max-w-[140px]">
-                          {p.supplier_name}
+                          <a
+                            href={p.supplier_id ? '/crm?id=' + p.supplier_id : '/crm?search=' + encodeURIComponent(p.supplier_name)}
+                            title="View Supplier Account Profile & Ledger"
+                            className="hover:text-crimson-primary hover:underline transition-colors"
+                          >
+                            {p.supplier_name}
+                          </a>
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
                           {p.quantity} {p.unit_of_measure}

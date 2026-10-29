@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -52,6 +52,25 @@ export default function CRMPage() {
     });
     return () => { cancelled = true; };
   }, [fetchAll, filter]);
+
+    // Deep-link directly into an individual's account ledger if ?id= or ?search= is in the URL
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const targetId = params.get('id');
+    const targetSearch = params.get('search') || params.get('name');
+    if (targetSearch) {
+      setSearch(targetSearch);
+    }
+    if (targetId) {
+      fetchPartyDetails(targetId).then((d) => {
+        if (d) {
+          setDetailParty(d);
+          setDetailOpen(true);
+        }
+      });
+    }
+  }, []);
 
   useEscapeToClose(addOpen, () => setAddOpen(false));
   useEscapeToClose(!!editParty, () => setEditParty(null));
@@ -255,7 +274,7 @@ export default function CRMPage() {
                 filtered.map((p) => (
                   <tr key={p.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
                     <td className="px-4 py-3">
-                      <span className="font-medium text-foreground text-body">{p.name}</span>
+                      <button onClick={() => handleViewDetails(p)} className="font-medium text-foreground text-body hover:text-crimson-primary hover:underline transition-colors text-left">{p.name}</button>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-block text-caption font-medium px-2 py-0.5 rounded border ${typeBadge(p.party_type)}`}>
@@ -501,10 +520,17 @@ function PartyModal({ party, onClose, onSaved }: { party?: Party; onClose: () =>
 }
 
 // ============================================================================
-// PartyDetailDrawer
+// PartyDetailDrawer — Tabbed Account Profile & Transaction Ledger
 // ============================================================================
 
+type DrawerTab = "overview" | "invoices" | "purchases" | "payments" | "ledger";
+
 function PartyDetailDrawer({ party, onClose }: { party: PartyDetail; onClose: () => void }) {
+  const [tab, setTab] = useState<DrawerTab>("overview");
+
+  const isBuyer = party.party_type === "CUSTOMER" || party.party_type === "BOTH";
+  const isSupplier = party.party_type === "SUPPLIER" || party.party_type === "BOTH";
+
   function typeBadge(type: string) {
     if (type === "SUPPLIER") return "bg-blue-500/15 text-blue-400 border-blue-500/20";
     if (type === "BOTH") return "bg-purple-500/15 text-purple-400 border-purple-500/20";
@@ -517,214 +543,432 @@ function PartyDetailDrawer({ party, onClose }: { party: PartyDetail; onClose: ()
     return "Supplier";
   }
 
+  function fmtDate(d: string) {
+    if (!d) return "—";
+    return new Date(d).toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" });
+  }
+
+  const tabs: { key: DrawerTab; label: string; count?: number }[] = [
+    { key: "overview", label: "Overview" },
+    ...(isBuyer ? [{ key: "invoices" as DrawerTab, label: "Invoices", count: party.salesInvoices?.length ?? 0 }] : []),
+    ...(isSupplier ? [{ key: "purchases" as DrawerTab, label: "Purchases & Items", count: (party.productPurchases?.length ?? 0) }] : []),
+    { key: "payments", label: "Payments", count: party.payments?.length ?? 0 },
+    { key: "ledger", label: "Account Ledger", count: party.ledger.length },
+  ];
+
+  const totalBilled = party.party_type === "SUPPLIER"
+    ? (party.productPurchases ?? []).filter(p => p.status === "confirmed").reduce((s, p) => s + Number(p.purchase_total_pkr || 0), 0) + (party.sides?.sell?.total_invoice_value || 0)
+    : (party.salesInvoices ?? []).reduce((s, i) => s + Number(i.total_invoice_value_pkr || 0), 0);
+  const totalPaid = party.total_paid;
+  const outstanding = Math.abs(party.closing_balance);
+
   return (
     <>
       <div className="drawer-overlay" onClick={onClose} />
-      <div className="drawer-panel" style={{ zIndex: 80 }}>
+      <div className="drawer-panel" style={{ zIndex: 80, width: "min(92vw, 880px)" }}>
+        {/* ── Header ── */}
         <div className="drawer-header">
-          <div className="flex items-center gap-3">
-            <h2 className="text-h2 font-semibold">{party.name}</h2>
-            <span className={`inline-block text-caption font-medium px-2 py-0.5 rounded border ${typeBadge(party.party_type)}`}>
-              {typeLabel(party.party_type)}
-            </span>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-10 w-10 rounded-full bg-crimson-primary/10 flex items-center justify-center shrink-0">
+              <span className="text-crimson-primary font-bold text-body">{party.name.charAt(0).toUpperCase()}</span>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-h2 font-semibold truncate">{party.name}</h2>
+                <span className={`inline-block text-caption font-medium px-2 py-0.5 rounded border ${typeBadge(party.party_type)}`}>
+                  {typeLabel(party.party_type)}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 mt-0.5 text-caption text-muted">
+                {party.phone && <span className="font-mono">{party.phone}</span>}
+                {party.email && <span className="truncate">{party.email}</span>}
+              </div>
+            </div>
           </div>
-          <button onClick={onClose} className="h-8 w-8 rounded-lg flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-muted transition-colors">
+          <button onClick={onClose} className="h-8 w-8 rounded-lg flex items-center justify-center text-muted hover:text-foreground hover:bg-bg-muted transition-colors shrink-0">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-        <div className="drawer-body space-y-6">
-          {/* Contact Info */}
-          <div className="glass-card p-4 space-y-3">
-            <h3 className="text-caption text-muted uppercase tracking-wider font-medium">Contact Information</h3>
-            <div className="grid grid-cols-2 gap-3 text-body">
-              <div>
-                <span className="text-muted text-caption">Phone</span>
-                <p className="text-foreground font-mono">{party.phone || "—"}</p>
-              </div>
-              <div>
-                <span className="text-muted text-caption">Email</span>
-                <p className="text-foreground">{party.email || "—"}</p>
-              </div>
-              <div className="col-span-2">
-                <span className="text-muted text-caption">Address</span>
-                <p className="text-foreground">{party.address || "—"}</p>
-              </div>
-            </div>
-          </div>
 
-          {/* Financial Summary */}
-          <div className="glass-card p-4 space-y-3">
-            <h3 className="text-caption text-muted uppercase tracking-wider font-medium">Financial Summary</h3>
-            {party.party_type === "BOTH" ? (
-              <div className="space-y-4">
-                {(["buy", "sell"] as const).map((side) => {
-                  const totals = party.sides[side];
-                  if (!totals) return null;
-                  const amountLabel = side === "buy" ? "Amount Receivable" : "Amount Payable";
-                  return (
-                    <div key={side} className="space-y-2">
-                      <span className="text-caption text-muted uppercase tracking-wider">
-                        {side === "buy" ? "Buyer Side" : "Supplier Side"} &mdash; {amountLabel}
-                      </span>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <span className="text-muted text-caption">Invoices</span>
-                          <p className="font-mono font-bold text-foreground">{totals.invoice_count}</p>
+        {/* ── Clear Running Balance Banner ── */}
+        <div className="px-5 py-3 border-b border-border-subtle bg-bg-muted/40 grid grid-cols-3 gap-3 text-center">
+          <div>
+            <p className="text-[10px] text-muted uppercase tracking-wider font-medium">Total Billed</p>
+            <p className="font-mono font-bold text-foreground text-body mt-0.5">{formatPKR(totalBilled)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] text-muted uppercase tracking-wider font-medium">Total Paid</p>
+            <p className="font-mono font-bold text-status-optimal text-body mt-0.5">{formatPKR(totalPaid)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] text-muted uppercase tracking-wider font-medium">{balanceAmountLabel(party.party_type, party.closing_balance)}</p>
+            <p className={`font-mono font-bold text-body mt-0.5 ${outstanding > 0 ? "text-crimson-primary" : "text-status-optimal"}`}>
+              {formatPKR(outstanding)} <span className="text-[10px] font-normal text-secondary">{balanceSide(party.closing_balance)}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* ── Tab Bar ── */}
+        <div className="flex border-b border-border-default gap-1 px-4 overflow-x-auto bg-bg-subtle/30">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`h-10 px-3.5 flex items-center gap-1.5 text-caption font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+                tab === t.key
+                  ? "border-crimson-primary text-crimson-primary font-semibold bg-crimson-primary/5"
+                  : "border-transparent text-secondary hover:text-foreground"
+              }`}
+            >
+              {t.label}
+              {t.count !== undefined && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-bg-muted text-muted font-mono">{t.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Tab Content ── */}
+        <div className="drawer-body space-y-5 p-5">
+
+          {/* OVERVIEW TAB */}
+          {tab === "overview" && (
+            <div className="space-y-4">
+              {/* Contact Info */}
+              <div className="glass-card p-4 space-y-3">
+                <h3 className="text-caption text-muted uppercase tracking-wider font-medium">Contact Information</h3>
+                <div className="grid grid-cols-2 gap-3 text-body">
+                  <div>
+                    <span className="text-muted text-caption">Phone</span>
+                    <p className="text-foreground font-mono">{party.phone || "—"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted text-caption">Email</span>
+                    <p className="text-foreground">{party.email || "—"}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-muted text-caption">Address</span>
+                    <p className="text-foreground">{party.address || "—"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted text-caption">Opening Balance</span>
+                    <p className="text-foreground font-mono">
+                      {formatPKR(party.opening_balance ?? 0)} <span className="text-caption text-secondary">{party.opening_balance_type}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Financial Summary */}
+              <div className="glass-card p-4 space-y-3">
+                <h3 className="text-caption text-muted uppercase tracking-wider font-medium">Financial Summary</h3>
+                {party.party_type === "BOTH" ? (
+                  <div className="space-y-4">
+                    {(["buy", "sell"] as const).map((side) => {
+                      const totals = party.sides[side];
+                      if (!totals) return null;
+                      const amountLabel = side === "buy" ? "Amount Receivable" : "Amount Payable";
+                      return (
+                        <div key={side} className="space-y-2">
+                          <span className="text-caption text-muted uppercase tracking-wider">
+                            {side === "buy" ? "Buyer Side" : "Supplier Side"} &mdash; {amountLabel}
+                          </span>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div><span className="text-muted text-caption">Invoices</span><p className="font-mono font-bold text-foreground">{totals.invoice_count}</p></div>
+                            <div><span className="text-muted text-caption">Invoice Value</span><p className="font-mono font-bold text-foreground">{formatPKR(totals.total_invoice_value)}</p></div>
+                            <div><span className="text-muted text-caption">Paid</span><p className="font-mono font-bold text-foreground">{formatPKR(totals.total_paid)}</p></div>
+                            <div>
+                              <span className="text-muted text-caption">{amountLabel}</span>
+                              <p className={`font-mono font-bold ${totals.outstanding_balance > 0 ? "text-crimson-primary" : "text-status-optimal"}`}>
+                                {formatPKR(Math.abs(totals.outstanding_balance))}{" "}
+                                <span className="text-caption font-medium">{side === "buy" ? "Dr" : "Cr"}</span>
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-muted text-caption">Invoice Value</span>
-                          <p className="font-mono font-bold text-foreground">{formatPKR(totals.total_invoice_value)}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted text-caption">Paid</span>
-                          <p className="font-mono font-bold text-foreground">{formatPKR(totals.total_paid)}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted text-caption">{amountLabel}</span>
-                          <p className={`font-mono font-bold ${totals.outstanding_balance > 0 ? "text-crimson-primary" : "text-status-optimal"}`}>
-                            {formatPKR(Math.abs(totals.outstanding_balance))}{" "}
-                            <span className="text-caption font-medium">{side === "buy" ? "Dr" : "Cr"}</span>
-                          </p>
-                        </div>
-                      </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div><span className="text-muted text-caption">Total Documents</span><p className="font-mono font-bold text-foreground">{party.invoice_count}</p></div>
+                    <div><span className="text-muted text-caption">Total Invoiced</span><p className="font-mono font-bold text-foreground">{formatPKR(party.total_invoice_value)}</p></div>
+                    <div><span className="text-muted text-caption">Total Paid</span><p className="font-mono font-bold text-foreground">{formatPKR(party.total_paid)}</p></div>
+                    <div>
+                      <span className="text-muted text-caption">Outstanding</span>
+                      <p className={`font-mono font-bold ${party.outstanding_balance > 0 ? "text-crimson-primary" : "text-status-optimal"}`}>
+                        {formatPKR(party.outstanding_balance)}
+                      </p>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className="text-muted text-caption">Total Invoices</span>
-                  <p className="font-mono font-bold text-foreground">{party.invoice_count}</p>
-                </div>
-                <div>
-                  <span className="text-muted text-caption">Invoice Value</span>
-                  <p className="font-mono font-bold text-foreground">{formatPKR(party.total_invoice_value)}</p>
-                </div>
-                <div>
-                  <span className="text-muted text-caption">Total Paid</span>
-                  <p className="font-mono font-bold text-foreground">{formatPKR(party.total_paid)}</p>
-                </div>
-                <div>
-                  <span className="text-muted text-caption">Unpaid Invoices</span>
-                  <p className={`font-mono font-bold ${party.outstanding_balance > 0 ? "text-crimson-primary" : "text-status-optimal"}`}>
-                    {formatPKR(party.outstanding_balance)}
-                  </p>
-                </div>
-                <div className="col-span-2 rounded-lg border border-border-default bg-bg-muted/60 px-3 py-2 flex items-center justify-between">
-                  <span className="text-caption text-muted uppercase tracking-wider font-medium">
-                    {balanceAmountLabel(party.party_type, party.closing_balance)}
-                  </span>
-                  <p className="font-mono font-bold text-foreground">
-                    {formatPKR(Math.abs(party.closing_balance))}{" "}
-                    <span className="text-caption font-medium text-secondary">{balanceSide(party.closing_balance)}</span>
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Quick Actions */}
-          <div className="flex items-center gap-3">
-            {(party.party_type === "CUSTOMER" || party.party_type === "BOTH") && (
-              <a
-                href="/invoicing/"
-                className="h-9 px-4 rounded-lg bg-crimson-primary text-white font-medium text-body hover:bg-crimson-dark transition-colors inline-flex items-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Create Invoice
-              </a>
-            )}
-            {(party.party_type === "SUPPLIER" || party.party_type === "BOTH") && (
-              <a
-                href="/procurement/"
-                className="h-9 px-4 rounded-lg bg-blue-500 text-white font-medium text-body hover:bg-blue-600 transition-colors inline-flex items-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Log Material Entry
-              </a>
-            )}
-          </div>
-
-          {/* Combined Ledger */}
-          <div className="glass-card overflow-hidden">
-            <div className="p-4 pb-0">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-caption text-muted uppercase tracking-wider font-medium">Ledger</h3>
-                <span className="text-caption text-muted">
-                  {balanceAmountLabel(party.party_type, party.closing_balance)}:{" "}
-                  <strong className="font-mono text-foreground">
-                    {formatPKR(Math.abs(party.closing_balance))} {balanceSide(party.closing_balance)}
-                  </strong>
-                </span>
-              </div>
-              <div className="glow-line mb-3" />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-border-subtle">
-                    <th className="px-4 py-2 text-caption text-muted font-medium">Date</th>
-                    <th className="px-4 py-2 text-caption text-muted font-medium">Doc. No</th>
-                    <th className="px-4 py-2 text-caption text-muted font-medium">Details</th>
-                    <th className="px-4 py-2 text-caption text-muted font-medium text-right">Debit</th>
-                    <th className="px-4 py-2 text-caption text-muted font-medium text-right">Credit</th>
-                    <th className="px-4 py-2 text-caption text-muted font-medium text-right">Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {party.ledger.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-6 text-center text-caption text-muted">
-                        No financial documents recorded for this party.
-                      </td>
-                    </tr>
-                  )}
-                  {party.ledger.map((e) => (
-                    <tr key={`${e.doc_type}-${e.id}`} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
-                      <td className="px-4 py-2 text-caption text-secondary whitespace-nowrap">
-                        {new Date(e.date).toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "2-digit" })}
-                      </td>
-                      <td className="px-4 py-2 font-mono text-num-code text-secondary text-caption">{e.doc_no}</td>
-                      <td className="px-4 py-2 text-caption text-secondary">{e.remarks}</td>
-                      <td className="px-4 py-2 text-right font-mono text-num-table text-secondary text-caption">
-                        {e.debit > 0 ? formatPKR(e.debit) : "—"}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-num-table text-secondary text-caption">
-                        {e.credit > 0 ? formatPKR(e.credit) : "—"}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-num-table font-bold text-foreground text-caption">
-                        {formatPKR(Math.abs(e.balance))} <span className="text-[10px] font-normal text-secondary">{balanceSide(e.balance)}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                {party.ledger.length > 0 && (
-                  <tfoot>
-                    <tr className="border-t border-border-default font-bold">
-                      <td colSpan={3} className="px-4 py-2 text-caption text-muted uppercase">Total ({party.ledger.length} documents)</td>
-                      <td className="px-4 py-2 text-right font-mono text-num-table text-foreground text-caption">
-                        {formatPKR(party.ledger.reduce((s, e) => s + e.debit, 0))}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-num-table text-foreground text-caption">
-                        {formatPKR(party.ledger.reduce((s, e) => s + e.credit, 0))}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-num-table text-foreground text-caption">
-                        {formatPKR(Math.abs(party.ledger[party.ledger.length - 1].balance))}{" "}
-                        <span className="text-[10px] font-normal">{balanceSide(party.ledger[party.ledger.length - 1].balance)}</span>
-                      </td>
-                    </tr>
-                  </tfoot>
+                  </div>
                 )}
-              </table>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex items-center gap-3">
+                {isBuyer && (
+                  <a href="/invoicing/" className="h-9 px-4 rounded-lg bg-crimson-primary text-white font-medium text-body hover:bg-crimson-dark transition-colors inline-flex items-center gap-2">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    Create Invoice
+                  </a>
+                )}
+                {isSupplier && (
+                  <a href="/procurement/" className="h-9 px-4 rounded-lg bg-blue-500 text-white font-medium text-body hover:bg-blue-600 transition-colors inline-flex items-center gap-2">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    Log Material Entry
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* INVOICES TAB (customers/buyers) */}
+          {tab === "invoices" && (
+            <div className="glass-card overflow-hidden">
+              <div className="p-4 border-b border-border-subtle flex items-center justify-between">
+                <h3 className="text-caption text-muted uppercase tracking-wider font-medium">All Bills & Invoices</h3>
+                <span className="text-caption text-muted font-mono">{(party.salesInvoices ?? []).length} records</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-bg-subtle">
+                    <tr className="border-b border-border-subtle">
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Date</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Invoice No.</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Status</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Taxable (PKR)</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Tax (PKR)</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Total (PKR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(party.salesInvoices ?? []).length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-muted text-caption">No invoices found for this party.</td></tr>
+                    ) : (
+                      (party.salesInvoices ?? []).map((inv) => (
+                        <tr key={inv.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
+                          <td className="px-4 py-2 text-caption text-secondary whitespace-nowrap">{fmtDate(inv.created_at)}</td>
+                          <td className="px-4 py-2 font-mono text-caption text-foreground font-medium">{inv.invoice_number}</td>
+                          <td className="px-4 py-2">
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${inv.is_posted ? "bg-status-optimal/10 text-status-optimal" : "bg-amber-500/10 text-amber-500"}`}>
+                              {inv.is_posted ? "POSTED" : "DRAFT"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-caption text-secondary">{formatPKR(inv.taxable_value_pkr)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-caption text-secondary">{formatPKR(inv.sales_tax_amount_pkr)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-caption font-bold text-foreground">{formatPKR(inv.total_invoice_value_pkr)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {(party.salesInvoices ?? []).length > 0 && (
+                    <tfoot>
+                      <tr className="border-t border-border-default bg-bg-muted/60 font-bold">
+                        <td colSpan={5} className="px-4 py-2 text-caption text-muted uppercase">Total Invoiced</td>
+                        <td className="px-4 py-2 text-right font-mono text-caption text-foreground">
+                          {formatPKR((party.salesInvoices ?? []).reduce((s, i) => s + Number(i.total_invoice_value_pkr || 0), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* PURCHASES TAB (suppliers/vendors) */}
+          {tab === "purchases" && (
+            <div className="glass-card overflow-hidden">
+              <div className="p-4 border-b border-border-subtle flex items-center justify-between">
+                <h3 className="text-caption text-muted uppercase tracking-wider font-medium">All Purchases Made & Items Bought</h3>
+                <span className="text-caption text-muted font-mono">{(party.productPurchases ?? []).length} records</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-bg-subtle">
+                    <tr className="border-b border-border-subtle">
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Date</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Purchase #</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Item / Description</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Quantity</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Unit Rate</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Status</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Total (PKR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(party.productPurchases ?? []).length === 0 ? (
+                      <tr><td colSpan={7} className="px-4 py-8 text-center text-muted text-caption">No purchases recorded for this supplier.</td></tr>
+                    ) : (
+                      (party.productPurchases ?? []).map((pp) => (
+                        <tr key={pp.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
+                          <td className="px-4 py-2 text-caption text-secondary whitespace-nowrap">{fmtDate(pp.purchase_date)}</td>
+                          <td className="px-4 py-2 font-mono text-caption text-secondary">{pp.purchase_number}</td>
+                          <td className="px-4 py-2 text-caption text-foreground font-medium">
+                            {pp.product_name}
+                            {pp.sku && <span className="ml-1.5 text-[10px] text-muted font-mono">({pp.sku})</span>}
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-caption text-secondary">{Number(pp.quantity).toLocaleString()} {pp.unit_of_measure}</td>
+                          <td className="px-4 py-2 text-right font-mono text-caption text-secondary">{formatPKR(pp.purchase_rate)}</td>
+                          <td className="px-4 py-2">
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${pp.status === "confirmed" ? "bg-status-optimal/10 text-status-optimal" : pp.status === "cancelled" ? "bg-status-alert/10 text-status-alert" : "bg-amber-500/10 text-amber-500"}`}>
+                              {pp.status.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-caption font-bold text-foreground">{formatPKR(pp.purchase_total_pkr)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {(party.productPurchases ?? []).filter(p => p.status !== "cancelled").length > 0 && (
+                    <tfoot>
+                      <tr className="border-t border-border-default bg-bg-muted/60 font-bold">
+                        <td colSpan={6} className="px-4 py-2 text-caption text-muted uppercase">Total Purchases (Confirmed)</td>
+                        <td className="px-4 py-2 text-right font-mono text-caption text-foreground">
+                          {formatPKR((party.productPurchases ?? []).filter(p => p.status !== "cancelled").reduce((s, p) => s + Number(p.purchase_total_pkr || 0), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* PAYMENTS TAB */}
+          {tab === "payments" && (
+            <div className="glass-card overflow-hidden">
+              <div className="p-4 border-b border-border-subtle flex items-center justify-between">
+                <h3 className="text-caption text-muted uppercase tracking-wider font-medium">All Payments Made & Received</h3>
+                <span className="text-caption text-muted font-mono">{(party.payments ?? []).length} records</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-bg-subtle">
+                    <tr className="border-b border-border-subtle">
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Date</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Voucher No.</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Type</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Mode</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Reference #</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Amount (PKR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(party.payments ?? []).length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-muted text-caption">No payment records found.</td></tr>
+                    ) : (
+                      (party.payments ?? []).map((pmt) => (
+                        <tr key={pmt.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
+                          <td className="px-4 py-2 text-caption text-secondary whitespace-nowrap">{fmtDate(pmt.date)}</td>
+                          <td className="px-4 py-2 font-mono text-caption text-secondary">{pmt.voucher_no}</td>
+                          <td className="px-4 py-2">
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${pmt.kind === "RECEIPT" ? "bg-status-optimal/10 text-status-optimal" : "bg-blue-500/10 text-blue-400"}`}>
+                              {pmt.kind === "RECEIPT" ? "Received" : "Paid"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-caption text-secondary">{pmt.payment_mode}</td>
+                          <td className="px-4 py-2 text-caption text-secondary font-mono">{pmt.reference_no || "—"}</td>
+                          <td className="px-4 py-2 text-right font-mono text-caption font-bold text-status-optimal">{formatPKR(pmt.amount)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {(party.payments ?? []).length > 0 && (
+                    <tfoot>
+                      <tr className="border-t border-border-default bg-bg-muted/60 font-bold">
+                        <td colSpan={5} className="px-4 py-2 text-caption text-muted uppercase">Total Transacted</td>
+                        <td className="px-4 py-2 text-right font-mono text-caption text-status-optimal">
+                          {formatPKR((party.payments ?? []).reduce((s, p) => s + Number(p.amount || 0), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* FULL ACCOUNT LEDGER TAB (Detailed running balance) */}
+          {tab === "ledger" && (
+            <div className="glass-card overflow-hidden">
+              <div className="p-4 pb-0">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-caption text-muted uppercase tracking-wider font-medium">Individual Account Ledger</h3>
+                    <p className="text-[11px] text-muted mt-0.5">Chronological transactions with debit, credit & running balance</p>
+                  </div>
+                  <span className="text-caption text-muted">
+                    {balanceAmountLabel(party.party_type, party.closing_balance)}:{" "}
+                    <strong className="font-mono text-foreground">
+                      {formatPKR(Math.abs(party.closing_balance))} {balanceSide(party.closing_balance)}
+                    </strong>
+                  </span>
+                </div>
+                <div className="glow-line mb-3" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-border-subtle bg-bg-subtle/50">
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Date</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Doc. No</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium">Transaction Details</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Debit (PKR)</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Credit (PKR)</th>
+                      <th className="px-4 py-2 text-caption text-muted font-medium text-right">Running Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {party.ledger.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-caption text-muted">
+                          No financial documents recorded for this account.
+                        </td>
+                      </tr>
+                    )}
+                    {party.ledger.map((e) => (
+                      <tr key={`${e.doc_type}-${e.id}`} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
+                        <td className="px-4 py-2 text-caption text-secondary whitespace-nowrap">
+                          {new Date(e.date).toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "2-digit" })}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-num-code text-secondary text-caption">{e.doc_no}</td>
+                        <td className="px-4 py-2 text-caption text-secondary">{e.remarks}</td>
+                        <td className="px-4 py-2 text-right font-mono text-num-table text-secondary text-caption">
+                          {e.debit > 0 ? formatPKR(e.debit) : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-num-table text-secondary text-caption">
+                          {e.credit > 0 ? formatPKR(e.credit) : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-num-table font-bold text-foreground text-caption">
+                          {formatPKR(Math.abs(e.balance))} <span className="text-[10px] font-normal text-secondary">{balanceSide(e.balance)}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {party.ledger.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t border-border-default font-bold bg-bg-muted/60">
+                        <td colSpan={3} className="px-4 py-2 text-caption text-muted uppercase">Total ({party.ledger.length} entries)</td>
+                        <td className="px-4 py-2 text-right font-mono text-num-table text-foreground text-caption">
+                          {formatPKR(party.ledger.reduce((s, e) => s + e.debit, 0))}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-num-table text-foreground text-caption">
+                          {formatPKR(party.ledger.reduce((s, e) => s + e.credit, 0))}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-num-table text-foreground text-caption">
+                          {formatPKR(Math.abs(party.ledger[party.ledger.length - 1].balance))}{" "}
+                          <span className="text-[10px] font-normal">{balanceSide(party.ledger[party.ledger.length - 1].balance)}</span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>
