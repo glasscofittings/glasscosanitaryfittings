@@ -15,7 +15,7 @@ import {
   UserRound,
 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-import { PayrollStatusBadge, PayrollHeadBadge } from "./PayrollBadges";
+import { PayrollStatusBadge, PayrollHeadBadge, PayrollWageGroupBadge } from "./PayrollBadges";
 import { formatPKR } from "@/lib/utils/formatters";
 import {
   type EmployeeLedgerAccount,
@@ -216,13 +216,14 @@ export default function EmployeeLedgerView({
                           </div>
                         </td>
                         <td className="p-3">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             {acc.costClass === "PRODUCTION" ? (
                               <Factory className="w-3.5 h-3.5 text-amber-500" />
                             ) : (
                               <Building2 className="w-3.5 h-3.5 text-blue-500" />
                             )}
                             <PayrollHeadBadge costClass={acc.costClass} />
+                            <PayrollWageGroupBadge employmentType={acc.employmentType} />
                           </div>
                         </td>
                         <td className="p-3">

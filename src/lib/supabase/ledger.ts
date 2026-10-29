@@ -887,6 +887,11 @@ export interface PLStatement {
   operatingExpenses: PLRow[];
   /** Legacy expenses array kept for backward compatibility with existing code */
   expenses: PLRow[];
+  /** Four discrete payroll lines inside COGS and OPEX */
+  productionSalaries?: PLRow | null;
+  productionWages?: PLRow | null;
+  adminSalaries?: PLRow | null;
+  adminWages?: PLRow | null;
   totalRevenue: number;
   totalCOGS: number;
   grossProfit: number;
@@ -924,11 +929,21 @@ export function computePL(rows: TrialBalanceRow[]): PLStatement {
   const totalOperatingExpenses = operatingExpenses.reduce((a, r) => a + r.amount, 0);
   const netProfit = grossProfit - totalOperatingExpenses;
 
+  // Discrete payroll lines
+  const productionSalaries = cogs.find((r) => r.account_code === "5011") ?? null;
+  const productionWages = cogs.find((r) => r.account_code === "5010") ?? null;
+  const adminSalaries = operatingExpenses.find((r) => r.account_code === "5002") ?? null;
+  const adminWages = operatingExpenses.find((r) => r.account_code === "5012") ?? null;
+
   return {
     revenue,
     cogs,
     operatingExpenses,
     expenses: allExpenses,
+    productionSalaries,
+    productionWages,
+    adminSalaries,
+    adminWages,
     totalRevenue,
     totalCOGS,
     grossProfit,

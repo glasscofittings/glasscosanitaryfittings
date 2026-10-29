@@ -1600,7 +1600,9 @@ export async function exportWorkerPayslipPDF(
   doc.setFontSize(8.5)
   doc.setTextColor(...C.slate)
   let leftCurY = metaY + 13.5
-  doc.text(`${worker.role_designation}  •  Joined ${formatDate(worker.joining_date)}`, MARGIN, leftCurY)
+  const workerCostClass = worker.cost_class || 'PRODUCTION'
+  const workerWageGroup = worker.employment_type === 'PERMANENT_SALARY' ? 'Salary' : 'Wage'
+  doc.text(`${worker.role_designation}  •  ${workerCostClass} [${workerWageGroup}]  •  Joined ${formatDate(worker.joining_date)}`, MARGIN, leftCurY)
   leftCurY += 4.2
   setNumericFont(doc)
   doc.setTextColor(9, 9, 11)
@@ -3146,13 +3148,14 @@ export async function exportPayrollRunSlipPDF(
 
   const labelW = 35
   const valW = contentWidth / 2 - labelW
+  const wageGroup = item.employment_type === 'PERMANENT_SALARY' ? 'Salary' : 'Wage'
   y = drawBilingualTable(doc, {
     startY: y,
     columnWidths: [labelW, valW, labelW, valW],
     labelColumns: [0, 2],
     body: [
-      [{ en: 'Employee Name' }, { en: item.worker_name }, { en: 'Cost Class' }, { en: item.cost_class }],
-      [{ en: 'Employment' }, { en: item.employment_type }, { en: 'Attendance' }, { en: `P: ${item.present_days} | A: ${item.absent_days} | L: ${item.leave_days}` }],
+      [{ en: 'Employee Name' }, { en: item.worker_name }, { en: 'Cost Class / Pay' }, { en: `${item.cost_class} · ${wageGroup}` }],
+      [{ en: 'Employment' }, { en: `${item.employment_type} [${wageGroup}]` }, { en: 'Attendance' }, { en: `P: ${item.present_days} | A: ${item.absent_days} | L: ${item.leave_days}` }],
       [{ en: 'Overtime' }, { en: `${Math.floor(item.overtime_minutes / 60)}h ${item.overtime_minutes % 60}m` }, { en: 'Undertime' }, { en: `${Math.floor(item.undertime_minutes / 60)}h ${item.undertime_minutes % 60}m` }],
     ],
   })
@@ -3203,6 +3206,7 @@ export async function exportDisbursementListPDF(
     account_iban?: string | null;
     amount: number;
     disbursement_batch_no?: string | null;
+    reference_no?: string | null;
   }>,
   titleText = 'Payroll Disbursement Sheet',
   operatorName = 'System Operator'
@@ -3221,7 +3225,7 @@ export async function exportDisbursementListPDF(
   autoTable(doc, {
     startY: y + 4,
     theme: 'grid',
-    head: [['SR.', 'EMPLOYEE NAME', 'COST CLASS', 'PAY METHOD', 'BANK / BRANCH', 'ACCOUNT / IBAN', 'DISBURSEMENT REF', 'AMOUNT (PKR)']],
+    head: [['SR.', 'EMPLOYEE NAME', 'COST CLASS', 'PAY METHOD', 'BANK / BRANCH', 'ACCOUNT / IBAN', 'DISBURSEMENT REF', 'TXN REF NO.', 'AMOUNT (PKR)']],
     body: disbursements.map((d, i) => [
       String(i + 1),
       d.worker_name,
@@ -3230,16 +3234,17 @@ export async function exportDisbursementListPDF(
       d.bank_name || '-',
       d.account_iban || '-',
       d.disbursement_batch_no || '-',
+      d.reference_no || '-',
       d.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }),
     ]),
-    foot: [['TOTAL', '', '', '', '', '', '', disbursements.reduce((s, d) => s + d.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })]],
+    foot: [['TOTAL', '', '', '', '', '', '', '', disbursements.reduce((s, d) => s + d.amount, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })]],
     margin: { left: MARGIN, right: MARGIN },
     styles: { cellPadding: 2.5, fontSize: 8 },
     headStyles: { fillColor: BLUE, textColor: C.white, fontStyle: 'bold' },
     footStyles: { fillColor: C.zebra, textColor: C.ink, fontStyle: 'bold' },
     columnStyles: {
       0: { cellWidth: 12, halign: 'center' },
-      7: { halign: 'right' },
+      8: { halign: 'right' },
     },
   })
 

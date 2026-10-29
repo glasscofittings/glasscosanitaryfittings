@@ -1,6 +1,7 @@
 "use client";
 
 import { type Worker } from "@/lib/supabase/labour";
+import { PayrollHeadBadge, PayrollWageGroupBadge } from "@/components/modules/payroll/PayrollBadges";
 
 interface Props {
   workers: Worker[];
@@ -42,6 +43,10 @@ export default function WorkerRoster({ workers, selectedId, onSelect, attendance
                   <div className="min-w-0">
                     <p className="text-body font-medium text-foreground truncate">{worker.full_name}</p>
                     <p className="text-caption text-muted truncate">{worker.role_designation}</p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <PayrollHeadBadge costClass={worker.cost_class || "PRODUCTION"} />
+                      <PayrollWageGroupBadge employmentType={worker.employment_type} />
+                    </div>
                   </div>
                   <div className="flex gap-1.5 shrink-0">
                     {s.present > 0 && (

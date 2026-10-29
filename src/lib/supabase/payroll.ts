@@ -118,6 +118,19 @@ export interface PayrollRun {
   items?: PayrollRunItem[];
 }
 
+export type PayrollWageGroup = "SALARY" | "WAGE";
+
+export interface PayrollExpenseMapping {
+  cost_class: PayrollCostClass;
+  wage_group: PayrollWageGroup;
+  account_id: string;
+}
+
+export function deriveWageGroup(employmentType?: string | null): PayrollWageGroup {
+  if (employmentType === "PERMANENT_SALARY") return "SALARY";
+  return "WAGE";
+}
+
 export interface PayrollPaymentLog {
   id: string;
   run_id: string;
@@ -128,6 +141,8 @@ export interface PayrollPaymentLog {
   journal_entry_id?: string | null;
   payment_date: string;
   disbursement_batch_no?: string | null;
+  reference_no?: string | null;
+  overdraft_reason?: string | null;
   notes?: string | null;
   operator_name?: string | null;
   created_at: string;
@@ -476,6 +491,8 @@ export async function payPayrollItems(input: {
   paymentDate?: string;
   operatorName?: string;
   allowOverdraft?: boolean;
+  referenceNo?: string;
+  overdraftReason?: string;
 }): Promise<{ success: boolean; error?: string; batchNo?: string }> {
   if (!SUPABASE_URL) return { success: false, error: "Database not configured." };
   try {
@@ -490,6 +507,8 @@ export async function payPayrollItems(input: {
         p_payment_date: input.paymentDate || new Date().toISOString().slice(0, 10),
         p_operator_name: input.operatorName || "System Operator",
         p_allow_overdraft: Boolean(input.allowOverdraft),
+        p_reference_no: input.referenceNo || null,
+        p_overdraft_reason: input.overdraftReason || null,
       }),
     });
 
@@ -499,6 +518,48 @@ export async function payPayrollItems(input: {
     }
 
     return { success: true, batchNo: body.batch_no };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function postAndPayPayrollRun(input: {
+  runId: string;
+  paymentMethod: PaymentMethod;
+  accountId: string;
+  referenceNo?: string;
+  paymentDate?: string;
+  operatorName?: string;
+  allowOverdraft?: boolean;
+  overdraftReason?: string;
+}): Promise<{ success: boolean; error?: string; batchNo?: string; journalNumber?: string }> {
+  if (!SUPABASE_URL) return { success: false, error: "Database not configured." };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/post_and_pay_payroll_run`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        p_run_id: input.runId,
+        p_payment_method: input.paymentMethod,
+        p_account_id: input.accountId,
+        p_reference_no: input.referenceNo || null,
+        p_payment_date: input.paymentDate || new Date().toISOString().slice(0, 10),
+        p_operator_name: input.operatorName || "System Operator",
+        p_allow_overdraft: Boolean(input.allowOverdraft),
+        p_overdraft_reason: input.overdraftReason || null,
+      }),
+    });
+
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, error: body.message || body.hint || "Post and pay payroll run RPC failed." };
+    }
+
+    return {
+      success: true,
+      batchNo: body.pay_result?.batch_no,
+      journalNumber: body.post_result?.journal_entry_number,
+    };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
