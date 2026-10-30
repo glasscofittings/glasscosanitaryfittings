@@ -16,11 +16,13 @@ import {
   Users,
   BookUser,
   ReceiptText,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import CrimsonButton from "@/components/ui/CrimsonButton";
 import GlassCard from "@/components/ui/GlassCard";
 import { formatPKR } from "@/lib/utils/formatters";
-import { fetchAccounts, type Account } from "@/lib/supabase/ledger";
+import { fetchAccounts, fetchAvailableFunds, type Account, type AvailableFunds } from "@/lib/supabase/ledger";
 import {
   fetchPayrollPeriods,
   fetchPayrollWageTypes,
@@ -32,6 +34,7 @@ import {
   postPayrollRun,
   payPayrollItems,
   reversePayrollRun,
+  fetchRunItemLines,
   fetchPayrollPaymentLogs,
   fetchPayrollCrossLedgerTransactions,
   fetchPayrollParties,
@@ -41,8 +44,8 @@ import {
   type PayrollWageType,
   type PayrollRun,
   type PayrollPaymentLog,
-  type PayrollRunItem,
 } from "@/lib/supabase/payroll";
+import { monthLabelOf, round2 } from "@/lib/salary";
 import { type Worker } from "@/lib/supabase/labour";
 import EmployeeLedgerView from "@/components/modules/payroll/EmployeeLedgerView";
 import TransactionHistory from "@/components/modules/payroll/TransactionHistory";
@@ -61,7 +64,7 @@ export default function SAPPayrollPage() {
   const { profile } = useAuth();
   const operatorName = profile?.device_name || profile?.email || "Accounts Dept";
 
-  const [activeTab, setActiveTab] = useState<TabKey>("runs");
+  const [activeTab, setActiveTab] = useState<TabKey>("ledger");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -84,11 +87,16 @@ export default function SAPPayrollPage() {
   const [simCostClass, setSimCostClass] = useState<"ALL" | "PRODUCTION" | "ADMIN">("ALL");
   const [simulating, setSimulating] = useState(false);
   const [simResult, setSimResult] = useState<Awaited<ReturnType<typeof simulatePayrollRun>> | null>(null);
+  const [simUnmarkedConfirmed, setSimUnmarkedConfirmed] = useState(false);
 
   // Selected Run & Modals
   const [selectedRun, setSelectedRun] = useState<PayrollRun | null>(null);
+  const [expandedRunIds, setExpandedRunIds] = useState<string[]>([]);
   const [payModalRun, setPayModalRun] = useState<PayrollRun | null>(null);
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  /** Editable per-employee disbursement amounts: { [item_id]: amount }. */
+  const [payAmounts, setPayAmounts] = useState<Record<string, number>>({});
+  const [availableFunds, setAvailableFunds] = useState<AvailableFunds | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK">("CASH");
   const [paymentAccountId, setPaymentAccountId] = useState<string>("");
   const [submittingPayment, setSubmittingPayment] = useState(false);
@@ -107,13 +115,15 @@ export default function SAPPayrollPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [pList, wtList, rList, accList, logs, workerList] = await Promise.all([
+      const [pList, wtList, rList, accList, logs, workerList, partyList, crossList] = await Promise.all([
         fetchPayrollPeriods(),
         fetchPayrollWageTypes(),
         fetchPayrollRuns(),
         fetchAccounts(),
         fetchPayrollPaymentLogs(),
         fetchPayrollEmployeeProfiles(),
+        fetchPayrollParties(),
+        fetchPayrollCrossLedgerTransactions(),
       ]);
       setPeriods(pList);
       setWageTypes(wtList);
@@ -121,10 +131,10 @@ export default function SAPPayrollPage() {
       setAccounts(accList);
       setPaymentLogs(logs);
       setWorkers(workerList);
-
-      if (pList.length > 0 && !simPeriodId) {
-        setSimPeriodId(pList[0].id);
-      }
+      // CRM parties (customers, suppliers) + cross-ledger receipts/vouchers — these
+      // are what give the Employee Accounts ledger its customer & vendor rows.
+      setParties(partyList);
+      setCrossLogs(crossList);
     } catch (err) {
       console.error("Load payroll error:", err);
       toast.error("Failed to load payroll data.");
@@ -132,7 +142,7 @@ export default function SAPPayrollPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [simPeriodId]);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -158,6 +168,7 @@ export default function SAPPayrollPage() {
         costClassFilter: simCostClass === "ALL" ? null : simCostClass,
       });
       setSimResult(sim);
+      setSimUnmarkedConfirmed(false);
       setActiveTab("simulation");
       toast.success(`Simulation complete for ${sim.totals.totalWorkers} employees.`);
     } catch (err: any) {
@@ -169,6 +180,13 @@ export default function SAPPayrollPage() {
 
   const handleApproveAndSaveRun = async () => {
     if (!simResult) return;
+    const unmarkedWorkers = simResult.items.filter((it) => (it.unmarkedDays || 0) > 0);
+    if (unmarkedWorkers.length > 0 && !simUnmarkedConfirmed) {
+      toast.error(
+        `${unmarkedWorkers.length} worker${unmarkedWorkers.length === 1 ? " has" : "s have"} unmarked attendance days. Review and tick the confirmation before approving.`
+      );
+      return;
+    }
     try {
       const { data, error } = await createPayrollRunFromSimulation(simResult, operatorName);
       if (error || !data) {
@@ -177,6 +195,7 @@ export default function SAPPayrollPage() {
       }
       toast.success(`Payroll Run ${data.run_no} created and approved.`);
       setSimResult(null);
+      setSimUnmarkedConfirmed(false);
       await loadData();
       setActiveTab("runs");
     } catch (err: any) {
@@ -203,6 +222,54 @@ export default function SAPPayrollPage() {
       toast.error("Please select employees and a liquid cash/bank account.");
       return;
     }
+
+    // Enforce method ⇄ account pairing: CASH cannot pay from a bank account and vice versa.
+    const account = accounts.find((a) => a.id === paymentAccountId);
+    const accountIsCash = !!account && (account.is_default_cash || account.account_code === "1000");
+    const accountIsBank = !!account && ((account.is_liquid_funds && !accountIsCash) || account.account_code === "1002");
+    if (paymentMethod === "CASH" && !accountIsCash) {
+      toast.error("Cash disbursements must be paid from a Cash in Hand account.");
+      return;
+    }
+    if (paymentMethod === "BANK" && !accountIsBank) {
+      toast.error("Bank transfers must be paid from a Bank account.");
+      return;
+    }
+
+    // Build explicit per-employee amounts (defaults to the full pending amount).
+    const amounts: Record<string, number> = {};
+    let total = 0;
+    for (const item of payModalRun.items || []) {
+      if (!selectedItemIds.includes(item.id)) continue;
+      const pending = round2(Number(item.net_pay) - Number(item.amount_paid));
+      const raw = payAmounts[item.id];
+      const amount = round2(Number.isFinite(raw) && raw !== undefined ? raw : pending);
+      if (amount <= 0) {
+        toast.error(`${item.worker_name}: payment amount must be greater than zero.`);
+        return;
+      }
+      if (amount > pending) {
+        toast.error(
+          `${item.worker_name}: amount ${formatPKR(amount)} exceeds the pending ${formatPKR(pending)}.`
+        );
+        return;
+      }
+      amounts[item.id] = amount;
+      total = round2(total + amount);
+    }
+    if (total <= 0) {
+      toast.error("Selected payment total must be greater than zero.");
+      return;
+    }
+
+    const balance = paymentMethod === "CASH" ? availableFunds?.cashBalance : availableFunds?.bankBalance;
+    if (typeof balance === "number" && total > balance) {
+      toast.error(
+        `Insufficient ${paymentMethod === "CASH" ? "cash in hand" : "bank balance"}: ${formatPKR(balance)} available vs ${formatPKR(total)} selected.`
+      );
+      return;
+    }
+
     setSubmittingPayment(true);
     try {
       const res = await payPayrollItems({
@@ -211,20 +278,47 @@ export default function SAPPayrollPage() {
         paymentMethod,
         accountId: paymentAccountId,
         operatorName,
+        amounts,
       });
       if (!res.success) {
         toast.error(res.error || "Payment execution failed.");
         return;
       }
-      toast.success(`Disbursed PKR via batch ${res.batchNo}`);
+      toast.success(
+        `Disbursed ${formatPKR(total)} to ${selectedItemIds.length} employee${selectedItemIds.length === 1 ? "" : "s"} via batch ${res.batchNo}`
+      );
       setPayModalRun(null);
       setSelectedItemIds([]);
+      setPayAmounts({});
+      setPaymentAccountId("");
       await loadData();
     } catch (err: any) {
       toast.error(err.message || "Payment execution failed.");
     } finally {
       setSubmittingPayment(false);
     }
+  };
+
+  /** Open the pay modal pre-selected for a set of items (defaults to every pending one). */
+  const openPayModal = (run: PayrollRun, itemIds?: string[]) => {
+    const pendingItems = (run.items || []).filter((i) => round2(i.net_pay - i.amount_paid) > 0);
+    const ids = itemIds ?? pendingItems.map((i) => i.id);
+    const seed: Record<string, number> = {};
+    for (const item of pendingItems) {
+      if (ids.includes(item.id)) seed[item.id] = round2(item.net_pay - item.amount_paid);
+    }
+    setPaymentMethod(
+      itemIds && itemIds.length === 1
+        ? (pendingItems.find((i) => i.id === itemIds[0])?.worker?.default_pay_method === "BANK" ? "BANK" : "CASH")
+        : "CASH"
+    );
+    setPaymentAccountId("");
+    setSelectedItemIds(ids);
+    setPayAmounts(seed);
+    setPayModalRun(run);
+    fetchAvailableFunds()
+      .then(setAvailableFunds)
+      .catch(() => setAvailableFunds(null));
   };
 
   const handleExecuteReversal = async () => {
@@ -275,9 +369,16 @@ export default function SAPPayrollPage() {
     }
   };
 
-  // Print Payslip
-  const handlePrintSlip = async (item: PayrollRunItem, run: PayrollRun) => {
+  // Print Payslip — always re-load the run's wage-type lines so the slip prints
+  // the real earnings/deduction breakdown instead of a head-less summary row.
+  const handlePrintSlip = async (run: PayrollRun, itemId: string) => {
     try {
+      const items = await fetchRunItemLines(run.id);
+      const item = items.find((i) => i.id === itemId);
+      if (!item) {
+        toast.error("Could not load this payslip's wage-type lines.");
+        return;
+      }
       await exportPayrollRunSlipPDF(
         {
           worker_name: item.worker_name,
@@ -308,24 +409,44 @@ export default function SAPPayrollPage() {
     }
   };
 
-  // Export Disbursement List
+  // Export Disbursement List — one row per real payment log, carrying the actual
+  // method (cash vs bank) and the worker's bank name / IBAN.
+  // Reads the raw log state (not the memoized union) so React Compiler can keep
+  // the surrounding memoization intact.
   const handleExportDisbursement = (run?: PayrollRun) => {
-    const list = (run ? run.items || [] : runs.flatMap((r) => r.items || []))
-      .filter((i) => i.amount_paid > 0)
-      .map((i) => ({
-        worker_name: i.worker_name,
-        cost_class: i.cost_class,
-        payment_method: "BANK",
-        bank_name: i.worker?.bank_name,
-        account_iban: i.worker?.account_iban,
-        amount: i.amount_paid,
-        disbursement_batch_no: run?.run_no,
-      }));
+    const source = [...paymentLogs, ...crossLogs];
+    // Reversals are stamped on the row (`reversed_at`) by the storno RPC but are not
+    // part of the TS shape yet — read them defensively so reversed payouts never
+    // show as live cash outflows.
+    const reversedIds = source
+      .filter((l) => !!(l as PayrollPaymentLog & { reversed_at?: string | null }).reversed_at)
+      .map((l) => l.id);
+    const logs = source.filter(
+      (l) =>
+        !reversedIds.includes(l.id) &&
+        (l.payment_method === "CASH" || l.payment_method === "BANK") &&
+        // Customer receipts are inflows — never a disbursement.
+        l.run_id !== "cross-ledger-crv" &&
+        (run ? l.run?.id === run.id : true)
+    );
+    const list = logs.map((log) => {
+      const worker = workers.find((w) => w.id === log.item?.worker_id);
+      return {
+        worker_name: log.item?.worker_name || "—",
+        cost_class: log.item?.cost_class || "—",
+        payment_method: log.payment_method,
+        bank_name: worker?.bank_name ?? null,
+        account_iban: worker?.account_iban ?? null,
+        amount: Number(log.amount || 0),
+        disbursement_batch_no: log.disbursement_batch_no,
+        reference_no: log.reference_no,
+      };
+    });
     if (list.length === 0) {
       toast.error("No disbursed payments to export.");
       return;
     }
-    exportDisbursementListPDF(list, `Disbursement Sheet - ${run?.run_no || "All Runs"}`);
+    exportDisbursementListPDF(list, `Disbursement Sheet - ${run?.run_no || "All Runs"}`, operatorName);
   };
 
   // Filter liquid accounts for payment modal
@@ -338,10 +459,35 @@ export default function SAPPayrollPage() {
   // Combined payroll runs & cross-ledger transaction logs
   const allPaymentLogs = useMemo(() => [...paymentLogs, ...crossLogs], [paymentLogs, crossLogs]);
 
-  // Unified account ledger (employees, vendors, contractors & customers)
-  const employeeLedger = useMemo(
-    () => buildEmployeeLedger(runs, allPaymentLogs, workers, parties, crossLogs),
-    [runs, allPaymentLogs, workers, parties, crossLogs]
+  /** runId:workerId → run item id, so a single month can be paid directly. */
+  const payItemIndex = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const run of runs) {
+      for (const item of run.items || []) {
+        map.set(`${run.id}:${item.worker_id}`, item.id);
+      }
+    }
+    return map;
+  }, [runs]);
+
+  // Unified account ledger (employees, vendors, contractors & customers).
+  // Payroll logs and cross-ledger CRM logs are passed separately — buildEmployeeLedger
+  // merges them itself, and handing it the pre-merged union would double-count rows.
+  const employeeLedger = useMemo(() => {
+    const base = buildEmployeeLedger(runs, paymentLogs, workers, parties, crossLogs);
+    return base.map((acc) => ({
+      ...acc,
+      months: acc.months.map((m) => ({
+        ...m,
+        itemId: m.isLegacy ? undefined : payItemIndex.get(`${m.runId}:${acc.workerId}`),
+      })),
+    }));
+  }, [runs, paymentLogs, crossLogs, workers, parties, payItemIndex]);
+
+  /** Simulated workers whose attendance has unmarked days. */
+  const simUnmarkedWorkers = useMemo(
+    () => (simResult ? simResult.items.filter((it) => (it.unmarkedDays || 0) > 0) : []),
+    [simResult]
   );
 
   // ─── Cross-tab navigation (Ledger ⇄ Transactions) ─────────────────────
@@ -355,6 +501,31 @@ export default function SAPPayrollPage() {
     setLedgerFocus({ id: workerId, name: workerName });
     setActiveTab("ledger");
   };
+
+  // ─── Pay modal derived values ─────────────────────────────────────────
+  const payRunItems = payModalRun?.items || [];
+
+  /** Only accounts that match the chosen method — cash cannot pay from a bank and vice versa. */
+  const paymentAccountOptions = liquidAccounts.filter((a) => {
+    const isCash = a.is_default_cash || a.account_code === "1000";
+    const isBank = (a.is_liquid_funds && !isCash) || a.account_code === "1002";
+    return paymentMethod === "CASH" ? isCash : isBank;
+  });
+
+  const paySelectedTotal = round2(
+    selectedItemIds.reduce((sum, id) => {
+      const item = payRunItems.find((i) => i.id === id);
+      if (!item) return sum;
+      const pending = round2(item.net_pay - item.amount_paid);
+      const raw = payAmounts[id];
+      return sum + (typeof raw === "number" && Number.isFinite(raw) ? raw : pending);
+    }, 0)
+  );
+
+  const payMethodBalance =
+    paymentMethod === "CASH" ? availableFunds?.cashBalance : availableFunds?.bankBalance;
+
+  const payOverdrafted = typeof payMethodBalance === "number" && paySelectedTotal > payMethodBalance;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -387,13 +558,12 @@ export default function SAPPayrollPage() {
                 toast.error("Create an active period first.");
                 return;
               }
-              handleRunSimulation();
+              setActiveTab("simulation");
             }}
-            disabled={simulating}
             className="flex items-center gap-1.5"
           >
             <Play className="w-3.5 h-3.5" />
-            {simulating ? "Simulating..." : "New Payroll Run"}
+            New Payroll Run
           </CrimsonButton>
         </div>
       </div>
@@ -401,12 +571,12 @@ export default function SAPPayrollPage() {
       {/* ─── Navigation Tabs ─────────────────────────────────────────────── */}
       <div className="flex border-b border-border-default gap-2 overflow-x-auto pb-px">
         {[
+          { key: "ledger", label: "Employee Accounts", icon: BookUser, count: employeeLedger.length },
+          { key: "transactions", label: "Transactions", icon: ReceiptText, count: allPaymentLogs.length },
           { key: "runs", label: "Payroll Runs", icon: Layers, count: runs.length },
-          { key: "ledger", label: "Account Ledger", icon: BookUser, count: employeeLedger.length },
-          { key: "transactions", label: "Transaction History", icon: ReceiptText, count: allPaymentLogs.length },
           { key: "simulation", label: "Calculation Wizard", icon: Play },
-          { key: "wage_types", label: "Wage Types (COA Mapping)", icon: FileText, count: wageTypes.length },
-          { key: "periods", label: "Payroll Periods", icon: Calendar, count: periods.length },
+          { key: "periods", label: "Periods", icon: Calendar, count: periods.length },
+          { key: "wage_types", label: "Wage Types", icon: FileText, count: wageTypes.length },
         ].map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.key;
@@ -445,10 +615,12 @@ export default function SAPPayrollPage() {
             <div className="grid grid-cols-1 gap-4">
               {runs.map((run) => {
                 const isPosted = run.status === "POSTED" || run.status === "PAID" || run.status === "PARTIALLY_PAID";
-                const isReversed = run.status === "REVERSED";
+                const expanded = expandedRunIds.includes(run.id);
+                const runPending = round2(run.net_payable - run.amount_paid);
 
                 return (
-                  <GlassCard key={run.id} className="p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <GlassCard key={run.id} className="overflow-hidden">
+                    <div className="p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-2.5">
                         <span className="text-body font-mono font-bold text-foreground">{run.run_no}</span>
@@ -468,6 +640,15 @@ export default function SAPPayrollPage() {
                         >
                           {run.status}
                         </span>
+                        {run.status === "APPROVED" && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/25 flex items-center gap-1"
+                            title="This run has not been posted to the General Ledger yet."
+                          >
+                            <AlertTriangle className="w-3 h-3" />
+                            Not posted to accounts
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-caption text-muted">
                         <span>Staff: <strong className="text-foreground">{run.total_workers}</strong></span>
@@ -475,6 +656,7 @@ export default function SAPPayrollPage() {
                         <span>Deductions: <strong className="text-foreground">{formatPKR(run.total_deductions)}</strong></span>
                         <span>Net Payable: <strong className="text-crimson-primary font-mono">{formatPKR(run.net_payable)}</strong></span>
                         <span>Paid: <strong className="text-status-optimal font-mono">{formatPKR(run.amount_paid)}</strong></span>
+                        <span>Pending: <strong className={runPending > 0 ? "text-amber-500 font-mono" : "text-muted font-mono"}>{formatPKR(runPending)}</strong></span>
                       </div>
                     </div>
 
@@ -486,19 +668,29 @@ export default function SAPPayrollPage() {
                         </CrimsonButton>
                       )}
 
-                      {/* Pay Items */}
-                      {isPosted && run.amount_paid < run.net_payable && (
+                      {/* Pay whole run */}
+                      {isPosted && runPending > 0 && (
                         <button
-                          onClick={() => {
-                            setPayModalRun(run);
-                            setSelectedItemIds((run.items || []).filter((i) => (i.net_pay - i.amount_paid) > 0).map((i) => i.id));
-                          }}
+                          onClick={() => openPayModal(run)}
                           className="h-8 px-3 rounded-lg bg-status-optimal text-white hover:bg-emerald-600 text-caption font-medium transition-colors flex items-center gap-1.5"
                         >
                           <DollarSign className="w-3.5 h-3.5" />
                           Disburse Pay
                         </button>
                       )}
+
+                      {/* Expand items */}
+                      <button
+                        onClick={() =>
+                          setExpandedRunIds((prev) =>
+                            expanded ? prev.filter((id) => id !== run.id) : [...prev, run.id]
+                          )
+                        }
+                        className="h-8 px-3 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-caption font-medium transition-colors flex items-center gap-1.5"
+                      >
+                        {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        {expanded ? "Hide Employees" : "Employees"}
+                      </button>
 
                       {/* Disbursement Sheet Export */}
                       <button
@@ -521,6 +713,86 @@ export default function SAPPayrollPage() {
                         </button>
                       )}
                     </div>
+                    </div>
+
+                    {/* ── Expanded per-employee items ─────────────────────── */}
+                    {expanded && (
+                      <div className="border-t border-border-subtle bg-bg-subtle/30 overflow-x-auto">
+                        <table className="w-full text-caption text-left">
+                          <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
+                            <tr>
+                              <th className="p-2.5">Employee</th>
+                              <th className="p-2.5 text-right">Gross</th>
+                              <th className="p-2.5 text-right">Deductions</th>
+                              <th className="p-2.5 text-right">Net</th>
+                              <th className="p-2.5 text-right">Paid</th>
+                              <th className="p-2.5 text-right">Pending</th>
+                              <th className="p-2.5">Status</th>
+                              <th className="p-2.5 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border-subtle font-mono">
+                            {(run.items || []).length === 0 ? (
+                              <tr>
+                                <td colSpan={8} className="p-4 text-center font-sans text-muted">
+                                  No employee lines stored on this run.
+                                </td>
+                              </tr>
+                            ) : (
+                              (run.items || []).map((item) => {
+                                const pending = round2(item.net_pay - item.amount_paid);
+                                return (
+                                  <tr key={item.id} className="hover:bg-bg-subtle/50 transition-colors">
+                                    <td className="p-2.5 font-sans font-medium text-foreground">{item.worker_name}</td>
+                                    <td className="p-2.5 text-right text-secondary">{formatPKR(item.gross_earnings)}</td>
+                                    <td className="p-2.5 text-right text-status-alert">−{formatPKR(item.total_deductions)}</td>
+                                    <td className="p-2.5 text-right font-bold text-foreground">{formatPKR(item.net_pay)}</td>
+                                    <td className="p-2.5 text-right font-semibold text-status-optimal">{formatPKR(item.amount_paid)}</td>
+                                    <td className={`p-2.5 text-right font-semibold ${pending > 0 ? "text-amber-500" : "text-muted"}`}>
+                                      {formatPKR(pending)}
+                                    </td>
+                                    <td className="p-2.5">
+                                      <span
+                                        className={`text-[10px] px-2 py-0.5 rounded font-semibold ${
+                                          item.status === "PAID"
+                                            ? "bg-status-optimal/10 text-status-optimal"
+                                            : item.status === "REVERSED"
+                                            ? "bg-status-alert/10 text-status-alert"
+                                            : "bg-amber-500/10 text-amber-500"
+                                        }`}
+                                      >
+                                        {item.status}
+                                      </span>
+                                    </td>
+                                    <td className="p-2.5">
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        <button
+                                          onClick={() => handlePrintSlip(run, item.id)}
+                                          title="Print payslip (loads wage-type lines)"
+                                          className="h-7 px-2.5 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-[11px] font-medium transition-colors flex items-center gap-1"
+                                        >
+                                          <FileText className="w-3 h-3" />
+                                          Print Slip
+                                        </button>
+                                        {isPosted && pending > 0 && (
+                                          <button
+                                            onClick={() => openPayModal(run, [item.id])}
+                                            className="h-7 px-2.5 rounded-lg bg-status-optimal text-white hover:bg-emerald-600 text-[11px] font-medium transition-colors flex items-center gap-1"
+                                          >
+                                            <DollarSign className="w-3 h-3" />
+                                            Pay
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </GlassCard>
                 );
               })}
@@ -536,12 +808,16 @@ export default function SAPPayrollPage() {
             <h3 className="text-h2 font-semibold text-foreground mb-3">Simulation Configuration</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Period</label>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">
+                  Period <span className="text-status-alert">*</span>
+                </label>
                 <select
                   value={simPeriodId}
                   onChange={(e) => setSimPeriodId(e.target.value)}
+                  required
                   className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
                 >
+                  <option value="">Select a payroll period...</option>
                   {periods.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.period_code} ({p.start_date} to {p.end_date}) [{p.status}]
@@ -564,7 +840,11 @@ export default function SAPPayrollPage() {
               </div>
 
               <div className="flex items-end">
-                <CrimsonButton onClick={handleRunSimulation} disabled={simulating} className="w-full h-9">
+                <CrimsonButton
+                  onClick={handleRunSimulation}
+                  disabled={simulating || !simPeriodId}
+                  className="w-full h-9"
+                >
                   {simulating ? "Re-computing..." : "Run Simulation"}
                 </CrimsonButton>
               </div>
@@ -595,12 +875,47 @@ export default function SAPPayrollPage() {
 
               {/* Employee Calculation Grid */}
               <GlassCard className="overflow-hidden">
-                <div className="p-4 border-b border-border-subtle flex justify-between items-center">
-                  <h4 className="text-body font-semibold text-foreground">Worker Simulation Register</h4>
-                  <CrimsonButton onClick={handleApproveAndSaveRun}>
+                <div className="p-4 border-b border-border-subtle flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-body font-semibold text-foreground">Worker Simulation Register</h4>
+                    <p className="text-caption text-muted">
+                      Gross-to-net per worker: OT pay, undertime, loan recovery & net
+                    </p>
+                  </div>
+                  <CrimsonButton
+                    onClick={handleApproveAndSaveRun}
+                    disabled={simUnmarkedWorkers.length > 0 && !simUnmarkedConfirmed}
+                  >
                     Approve Run ({formatPKR(simResult.totals.netPayable)})
                   </CrimsonButton>
                 </div>
+
+                {/* Unmarked attendance warning — approval is gated behind a confirmation */}
+                {simUnmarkedWorkers.length > 0 && (
+                  <div className="p-3 md:p-4 bg-amber-500/5 border-b border-amber-500/25 space-y-2">
+                    <div className="flex items-start gap-2 text-caption text-amber-500">
+                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-semibold">
+                          {simUnmarkedWorkers.length} worker{simUnmarkedWorkers.length === 1 ? " has" : "s have"} unmarked attendance days — they are paid as unpaid.
+                        </p>
+                        <p className="text-[11px] text-amber-500/80">
+                          Mark the missing attendance in the Labour module before approving, or confirm you have reviewed them.
+                        </p>
+                      </div>
+                    </div>
+                    <label className="flex items-start gap-2 text-caption text-foreground cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={simUnmarkedConfirmed}
+                        onChange={(e) => setSimUnmarkedConfirmed(e.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>I have reviewed the unmarked days listed below and want to approve this run anyway.</span>
+                    </label>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-caption text-left">
                     <thead className="bg-bg-subtle text-secondary uppercase text-[10px] border-b border-border-subtle">
@@ -611,12 +926,15 @@ export default function SAPPayrollPage() {
                         <th className="p-3 text-right">Basic</th>
                         <th className="p-3 text-right">OT Pay</th>
                         <th className="p-3 text-right">Gross</th>
+                        <th className="p-3 text-right">Undertime</th>
                         <th className="p-3 text-right">Loan Recovery</th>
                         <th className="p-3 text-right">Net Salary</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border-subtle font-mono">
-                      {simResult.items.map((it) => (
+                      {simResult.items.map((it) => {
+                        const unmarked = it.unmarkedDays || 0;
+                        return (
                         <tr key={it.workerId} className="hover:bg-bg-subtle/50 transition-colors">
                           <td className="p-3 font-sans font-medium text-foreground">{it.workerName}</td>
                           <td className="p-3">
@@ -625,15 +943,28 @@ export default function SAPPayrollPage() {
                             </span>
                           </td>
                           <td className="p-3 text-secondary text-[11px]">
-                            P: {it.attendance.presentDays} | A: {it.attendance.absentDays} | L: {it.attendance.leaveDays}
+                            <span className="inline-flex items-center gap-1.5">
+                              P: {it.attendance.presentDays} | A: {it.attendance.absentDays} | L: {it.attendance.leaveDays}
+                              {unmarked > 0 && (
+                                <span
+                                  className="inline-flex items-center gap-1 text-amber-500 font-semibold"
+                                  title={`${unmarked} day${unmarked === 1 ? "" : "s"} with no attendance marked (paid as absent)`}
+                                >
+                                  <AlertTriangle className="w-3.5 h-3.5" />
+                                  {unmarked} unmarked
+                                </span>
+                              )}
+                            </span>
                           </td>
                           <td className="p-3 text-right">{formatPKR(it.baseEarnings)}</td>
                           <td className="p-3 text-right text-status-optimal">+{formatPKR(it.overtimePay)}</td>
                           <td className="p-3 text-right font-bold text-foreground">{formatPKR(it.grossEarnings)}</td>
+                          <td className="p-3 text-right text-status-alert">−{formatPKR(it.undertimeDeductions)}</td>
                           <td className="p-3 text-right text-status-alert">−{formatPKR(it.loanRecoveryDeduction)}</td>
                           <td className="p-3 text-right font-bold text-crimson-primary">{formatPKR(it.netPayable)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -643,17 +974,25 @@ export default function SAPPayrollPage() {
         </div>
       )}
 
-      {/* ─── TAB 3: EMPLOYEE ACCOUNT LEDGER ────────────────────────────── */}
+      {/* ─── TAB: EMPLOYEE ACCOUNTS ─────────────────────────────────────── */}
       {activeTab === "ledger" && (
         <EmployeeLedgerView
           key={`ledger-${ledgerFocus?.id ?? "all"}`}
           ledger={employeeLedger}
           focusWorkerId={ledgerFocus?.id ?? null}
           onViewTransactions={goToEmployeeTransactions}
+          onPayItem={(runId, itemId) => {
+            const run = runs.find((r) => r.id === runId);
+            if (!run) {
+              toast.error("Payroll run not found — refresh and try again.");
+              return;
+            }
+            openPayModal(run, [itemId]);
+          }}
         />
       )}
 
-      {/* ─── TAB 4: TRANSACTION HISTORY ────────────────────────────────── */}
+      {/* ─── TAB: TRANSACTIONS ──────────────────────────────────────────── */}
       {activeTab === "transactions" && (
         <TransactionHistory
           key={`txn-${txnFocus?.id ?? "all"}`}
@@ -661,7 +1000,9 @@ export default function SAPPayrollPage() {
           allAccounts={employeeLedger}
           focusWorkerId={txnFocus?.id ?? null}
           focusWorkerName={txnFocus?.name ?? null}
+          operatorName={operatorName}
           onOpenLedger={goToEmployeeLedger}
+          onReversed={loadData}
           onExport={() => handleExportDisbursement()}
         />
       )}
@@ -762,20 +1103,123 @@ export default function SAPPayrollPage() {
       {/* ─── PAYMENT MODAL ────────────────────────────────────────────────── */}
       {payModalRun && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <GlassCard className="max-w-md w-full p-6 space-y-4">
+          <GlassCard className="max-w-2xl w-full p-6 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-center">
               <h3 className="text-h2 font-semibold text-foreground">Disburse Payroll</h3>
               <button onClick={() => setPayModalRun(null)} className="text-muted hover:text-foreground">✕</button>
             </div>
 
             <div className="p-3 bg-bg-subtle rounded-lg border border-border-subtle text-caption space-y-1">
-              <p>Run: <strong>{payModalRun.run_no}</strong> ({payModalRun.period?.period_code})</p>
-              <p>Selected Staff: <strong>{selectedItemIds.length}</strong></p>
-              <p>Total Payable: <strong className="text-crimson-primary font-mono">{formatPKR(
-                (payModalRun.items || [])
-                  .filter((i) => selectedItemIds.includes(i.id))
-                  .reduce((sum, i) => sum + (i.net_pay - i.amount_paid), 0)
-              )}</strong></p>
+              <p>
+                Run: <strong>{payModalRun.run_no}</strong> ({monthLabelOf(payModalRun.period?.start_date || "") || payModalRun.period?.period_code})
+              </p>
+              <p className="flex items-center gap-3 flex-wrap">
+                <span>
+                  Selected: <strong>{selectedItemIds.length}</strong> / {payRunItems.length || payModalRun.total_workers}
+                </span>
+                <span>
+                  Total to disburse:{" "}
+                  <strong className="text-crimson-primary font-mono">{formatPKR(paySelectedTotal)}</strong>
+                </span>
+                <span>
+                  {paymentMethod === "CASH" ? "Cash in hand" : "Bank balance"}:{" "}
+                  <strong className={payOverdrafted ? "text-status-alert font-mono" : "text-foreground font-mono"}>
+                    {typeof payMethodBalance === "number" ? formatPKR(payMethodBalance) : "—"}
+                  </strong>
+                </span>
+              </p>
+              {payOverdrafted && (
+                <p className="text-status-alert text-[11px] flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Selected amount exceeds the account balance.
+                </p>
+              )}
+            </div>
+
+            {/* Employee picker — one checkbox + editable amount per employee */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-caption text-secondary uppercase tracking-wider">Employees</label>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      setSelectedItemIds(payRunItems.map((i) => i.id));
+                      setPayAmounts(
+                        Object.fromEntries(
+                          payRunItems.map((i) => [i.id, round2(i.net_pay - i.amount_paid)])
+                        )
+                      );
+                    }}
+                    className="h-7 px-2.5 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-[11px] font-medium"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedItemIds([]);
+                      setPayAmounts({});
+                    }}
+                    className="h-7 px-2.5 rounded-lg bg-bg-muted border border-border-default text-secondary hover:text-foreground text-[11px] font-medium"
+                  >
+                    Select none
+                  </button>
+                </div>
+              </div>
+
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-border-subtle divide-y divide-border-subtle">
+                {payRunItems.length === 0 ? (
+                  <p className="p-3 text-caption text-muted">No employee lines available on this run.</p>
+                ) : (
+                  payRunItems.map((item) => {
+                    const pending = round2(item.net_pay - item.amount_paid);
+                    const checked = selectedItemIds.includes(item.id);
+                    const amount = payAmounts[item.id] ?? pending;
+                    return (
+                      <div key={item.id} className="p-2.5 flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            setSelectedItemIds((prev) =>
+                              on ? [...prev, item.id] : prev.filter((id) => id !== item.id)
+                            );
+                            setPayAmounts((prev) => {
+                              const next = { ...prev };
+                              if (on) next[item.id] = pending;
+                              else delete next[item.id];
+                              return next;
+                            });
+                          }}
+                          className="shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-caption font-medium text-foreground truncate">{item.worker_name}</p>
+                          <p className="text-[11px] text-muted font-mono">
+                            Net {formatPKR(item.net_pay)} · Pending {formatPKR(pending)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[11px] text-muted">PKR</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={pending}
+                            step="any"
+                            disabled={!checked}
+                            value={amount}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setPayAmounts((prev) => ({ ...prev, [item.id]: Number.isFinite(v) ? v : 0 }));
+                            }}
+                            className="w-28 h-8 px-2 rounded-lg bg-obsidian-bg border border-border-default text-right text-foreground text-caption font-mono disabled:opacity-40"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -783,7 +1227,19 @@ export default function SAPPayrollPage() {
                 <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Disbursement Method</label>
                 <select
                   value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value as any)}
+                  onChange={(e) => {
+                    const method = e.target.value as "CASH" | "BANK";
+                    setPaymentMethod(method);
+                    // Drop a selected account that no longer matches the method.
+                    const sel = accounts.find((a) => a.id === paymentAccountId);
+                    if (sel) {
+                      const selIsCash = sel.is_default_cash || sel.account_code === "1000";
+                      const selIsBank = (sel.is_liquid_funds && !selIsCash) || sel.account_code === "1002";
+                      if ((method === "CASH" && !selIsCash) || (method === "BANK" && !selIsBank)) {
+                        setPaymentAccountId("");
+                      }
+                    }
+                  }}
                   className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
                 >
                   <option value="CASH">Cash in Hand</option>
@@ -792,19 +1248,29 @@ export default function SAPPayrollPage() {
               </div>
 
               <div>
-                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">Payment Account</label>
+                <label className="text-caption text-secondary uppercase tracking-wider block mb-1">
+                  Payment Account{" "}
+                  <span className="text-[10px] normal-case text-muted">
+                    ({paymentMethod === "CASH" ? "cash accounts only" : "bank accounts only"})
+                  </span>
+                </label>
                 <select
                   value={paymentAccountId}
                   onChange={(e) => setPaymentAccountId(e.target.value)}
                   className="w-full h-9 px-3 rounded-lg bg-obsidian-bg border border-border-default text-foreground text-caption"
                 >
                   <option value="">Select Account...</option>
-                  {liquidAccounts.map((a) => (
+                  {paymentAccountOptions.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.account_code} {a.account_name}
                     </option>
                   ))}
                 </select>
+                {paymentAccountOptions.length === 0 && (
+                  <p className="text-[11px] text-amber-500 mt-1">
+                    No {paymentMethod === "CASH" ? "cash" : "bank"} account found in the Chart of Accounts.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -815,8 +1281,17 @@ export default function SAPPayrollPage() {
               >
                 Cancel
               </button>
-              <CrimsonButton onClick={handleExecutePayment} disabled={submittingPayment || !paymentAccountId}>
-                {submittingPayment ? "Executing..." : "Confirm & Post Payment"}
+              <CrimsonButton
+                onClick={handleExecutePayment}
+                disabled={
+                  submittingPayment ||
+                  !paymentAccountId ||
+                  selectedItemIds.length === 0 ||
+                  paySelectedTotal <= 0 ||
+                  payOverdrafted
+                }
+              >
+                {submittingPayment ? "Executing..." : `Confirm & Post ${formatPKR(paySelectedTotal)}`}
               </CrimsonButton>
             </div>
           </GlassCard>

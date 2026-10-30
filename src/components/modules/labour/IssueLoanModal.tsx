@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { issueLoan, type Worker } from "@/lib/supabase/labour";
+import { fetchAccounts, type Account } from "@/lib/supabase/ledger";
+import { isLiquidFundsAccount } from "@/lib/ledger/voucher-rules";
 import { capitalizeFirst } from "@/lib/utils";
 
 interface Props {
@@ -19,6 +21,8 @@ export default function IssueLoanModal({ open, worker, onClose, onCreated }: Pro
   const [monthlyDeduction, setMonthlyDeduction] = useState("");
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -28,7 +32,10 @@ export default function IssueLoanModal({ open, worker, onClose, onCreated }: Pro
       setMonthlyDeduction("");
       setIssueDate(new Date().toISOString().slice(0, 10));
       setReason("");
+      setAccountId("");
       setError("");
+      // Cash in Hand / Bank rows only — the loan money has to come FROM somewhere.
+      fetchAccounts().then((all) => setAccounts(all.filter(isLiquidFundsAccount)));
     }
   }, [open]);
 
@@ -38,7 +45,8 @@ export default function IssueLoanModal({ open, worker, onClose, onCreated }: Pro
 
   const amountNum = amount ? parseFloat(amount) : 0;
   const deductionNum = monthlyDeduction ? parseFloat(monthlyDeduction) : 0;
-  const isValid = amountNum > 0 && deductionNum > 0 && issueDate && reason.trim().length >= 2;
+  const isValid =
+    amountNum > 0 && deductionNum > 0 && issueDate && reason.trim().length >= 2 && !!accountId;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,18 +59,18 @@ export default function IssueLoanModal({ open, worker, onClose, onCreated }: Pro
       amount: amountNum,
       monthly_deduction_rate: deductionNum,
       reason: reason.trim(),
-      device_node: process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
+      account_id: accountId,
       operator_name: "Labour Manager",
     });
 
     setSaving(false);
-    if (result) {
+    if (result.loan) {
       queryClient.invalidateQueries({ queryKey: ["labour"] });
       queryClient.invalidateQueries({ queryKey: ["workers"] });
       onCreated();
       onClose();
     } else {
-      setError("Failed to issue loan. Check connection.");
+      setError(result.error || "Failed to issue loan. Check connection.");
     }
   }
 
@@ -135,6 +143,23 @@ export default function IssueLoanModal({ open, worker, onClose, onCreated }: Pro
                     placeholder="5000"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className={labelCls}>Paid From (Cash / Bank) *</label>
+                <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={inputCls}>
+                  <option value="">Select account…</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.account_code} — {a.account_name}
+                    </option>
+                  ))}
+                </select>
+                {accounts.length === 0 && (
+                  <p className="text-[10px] text-muted mt-1">
+                    No Cash in Hand / Bank account found in the chart of accounts.
+                  </p>
+                )}
               </div>
 
               {amountNum > 0 && deductionNum > 0 && (

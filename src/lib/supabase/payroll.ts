@@ -5,11 +5,22 @@
  * cash/bank disbursements, storno reversals, and wage types.
  */
 
-import { fetchWorkers, fetchAttendance, fetchWorkerLoans, type Worker, type AttendanceMap, type TimeLogMap, type WorkerLoan } from "./labour";
+import {
+  fetchWorkers,
+  fetchAttendanceRange,
+  fetchActiveLoansAll,
+  buildAttendanceMap,
+  buildTimeLogMap,
+  type Worker,
+  type AttendanceMap,
+  type TimeLogMap,
+  type WorkerLoan,
+} from "./labour";
 import { type Account } from "./ledger";
 import {
   calculateGrossToNetPayslip,
   round2,
+  monthLabelOf,
   type FullPayslipCalculationResult,
   type ManualAdjustmentInput,
   type RecurringComponentInput,
@@ -232,7 +243,7 @@ export async function fetchPayrollRuns(): Promise<PayrollRun[]> {
   if (!SUPABASE_URL) return [];
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/payroll_runs_v2?select=*,period:payroll_periods(*),items:payroll_run_items(*)&order=created_at.desc`,
+      `${SUPABASE_URL}/rest/v1/payroll_runs_v2?select=*,period:payroll_periods(*),items:payroll_run_items(*,worker:workers(bank_name,account_iban,default_pay_method))&order=created_at.desc`,
       { headers: headers() }
     );
     if (!res.ok) {
@@ -246,6 +257,26 @@ export async function fetchPayrollRuns(): Promise<PayrollRun[]> {
     return (await res.json()) as PayrollRun[];
   } catch (err) {
     console.error("fetchPayrollRuns error:", err);
+    return [];
+  }
+}
+
+/** Wage-type lines of every item in one run — used to render payslips. */
+export async function fetchRunItemLines(runId: string): Promise<PayrollRunItem[]> {
+  if (!SUPABASE_URL || !runId) return [];
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/payroll_run_items?run_id=eq.${runId}&select=*,lines:payroll_run_item_lines(*)&order=worker_name.asc`,
+      { headers: headers() }
+    );
+    if (!res.ok) {
+      console.error("fetchRunItemLines status:", res.status, await res.text().catch(() => ""));
+      return [];
+    }
+    const json = await res.json();
+    return (Array.isArray(json) ? json : []) as PayrollRunItem[];
+  } catch (err) {
+    console.error("fetchRunItemLines error:", err);
     return [];
   }
 }
@@ -275,11 +306,57 @@ export interface SimulateRunInput {
   manualAdjustmentsByWorker?: Record<string, ManualAdjustmentInput[]>;
 }
 
+interface RecurringWageItemRow {
+  id: string;
+  worker_id: string;
+  wage_type_code: string;
+  amount_or_rate: number;
+  valid_from: string;
+  valid_to: string | null;
+  wage_type?: {
+    code: string;
+    name: string;
+    category: RecurringComponentInput["category"];
+  } | null;
+}
+
+/**
+ * Recurring wage items (infotype 0008/0014) that are valid at any point in the
+ * period — ONE request, joined to payroll_wage_types for name & category.
+ */
+async function fetchRecurringWageItems(
+  startDate: string,
+  endDate: string
+): Promise<RecurringWageItemRow[]> {
+  if (!SUPABASE_URL) return [];
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/worker_recurring_wage_items?select=*,wage_type:payroll_wage_types(code,name,category)&valid_from=lte.${endDate}&or=(valid_to.is.null,valid_to.gte.${startDate})`,
+      { headers: headers() }
+    );
+    if (!res.ok) {
+      console.error("fetchRecurringWageItems status:", res.status, await res.text().catch(() => ""));
+      return [];
+    }
+    const json = await res.json();
+    return (Array.isArray(json) ? json : []) as RecurringWageItemRow[];
+  } catch (err) {
+    console.error("fetchRecurringWageItems error:", err);
+    return [];
+  }
+}
+
+/**
+ * Dry-run a payroll period: 1× workers, 1× attendance for the period,
+ * 1× active loans (all workers) and 1× recurring components — no N+1.
+ * Returned slips carry their own `unmarkedDays` for the UI warning.
+ */
 export async function simulatePayrollRun(
   input: SimulateRunInput
 ): Promise<{
   period: PayrollPeriod;
   items: FullPayslipCalculationResult[];
+  costClassFilter: PayrollCostClass | null;
   totals: {
     totalWorkers: number;
     grossEarnings: number;
@@ -293,13 +370,11 @@ export async function simulatePayrollRun(
   const period = periods.find((p) => p.id === input.periodId);
   if (!period) throw new Error("Payroll period not found.");
 
-  const [workers, attendanceRecords, allLoans] = await Promise.all([
+  const [workers, attendanceRecords, activeLoans, recurringRows] = await Promise.all([
     fetchWorkers(),
-    fetchAttendance(
-      new Date(period.start_date).getFullYear(),
-      new Date(period.start_date).getMonth() + 1
-    ),
-    Promise.all((await fetchWorkers()).map((w) => fetchWorkerLoans(w.id))),
+    fetchAttendanceRange(period.start_date, period.end_date),
+    fetchActiveLoansAll(),
+    fetchRecurringWageItems(period.start_date, period.end_date),
   ]);
 
   const activeWorkers = workers.filter((w) => {
@@ -308,20 +383,32 @@ export async function simulatePayrollRun(
     return true;
   });
 
-  const year = new Date(period.start_date).getFullYear();
-  const month = new Date(period.start_date).getMonth() + 1;
+  const attMap: AttendanceMap = buildAttendanceMap(attendanceRecords);
+  const timeLogs: TimeLogMap = buildTimeLogMap(attendanceRecords);
 
-  // Build attendance map
-  const attMap: AttendanceMap = {};
-  attendanceRecords.forEach((r) => {
-    if (!attMap[r.worker_id]) attMap[r.worker_id] = {};
-    attMap[r.worker_id][r.attendance_date] = r.status;
-  });
+  // One loan lookup for everybody, grouped by worker_id (no index matching).
+  const loansByWorker = new Map<string, WorkerLoan[]>();
+  for (const loan of activeLoans) {
+    const list = loansByWorker.get(loan.worker_id);
+    if (list) list.push(loan);
+    else loansByWorker.set(loan.worker_id, [loan]);
+  }
 
-  const workerLoansMap = new Map<string, WorkerLoan[]>();
-  workers.forEach((w, i) => {
-    workerLoansMap.set(w.id, allLoans[i] || []);
-  });
+  // Recurring components valid in the period, grouped by worker.
+  const recurringByWorker = new Map<string, RecurringComponentInput[]>();
+  for (const row of recurringRows) {
+    const amount = round2(Number(row.amount_or_rate) || 0);
+    if (amount <= 0 || !row.worker_id) continue;
+    const component: RecurringComponentInput = {
+      wageTypeCode: row.wage_type_code,
+      wageTypeName: row.wage_type?.name || row.wage_type_code,
+      category: row.wage_type?.category || "EARNING",
+      amount,
+    };
+    const list = recurringByWorker.get(row.worker_id);
+    if (list) list.push(component);
+    else recurringByWorker.set(row.worker_id, [component]);
+  }
 
   let grossSum = 0;
   let dedSum = 0;
@@ -330,13 +417,15 @@ export async function simulatePayrollRun(
   let adminCost = 0;
 
   const items: FullPayslipCalculationResult[] = [];
+  const periodRange = { start: period.start_date, end: period.end_date };
 
   for (const w of activeWorkers) {
-    const loans = workerLoansMap.get(w.id) || [];
     const manualAdjustments = input.manualAdjustmentsByWorker?.[w.id] || [];
 
-    const slip = calculateGrossToNetPayslip(w, attMap, year, month, {
-      activeLoans: loans,
+    const slip = calculateGrossToNetPayslip(w, attMap, periodRange, {
+      timeLogs,
+      recurringComponents: recurringByWorker.get(w.id) || [],
+      activeLoans: loansByWorker.get(w.id) || [],
       manualAdjustments,
       maxLoanDeductionPercent: 50,
     });
@@ -357,6 +446,7 @@ export async function simulatePayrollRun(
   return {
     period,
     items,
+    costClassFilter: input.costClassFilter ?? null,
     totals: {
       totalWorkers: activeWorkers.length,
       grossEarnings: grossSum,
@@ -375,79 +465,92 @@ export async function createPayrollRunFromSimulation(
   if (!SUPABASE_URL) return { data: null, error: "Database not configured." };
 
   try {
-    const runNo = `PR-${new Date().getFullYear()}-${Date.now().toString().slice(-5)}`;
+    if (!sim.items.length) {
+      return { data: null, error: "Simulation has no workers — nothing to create." };
+    }
 
-    // 1. Insert Run Header
-    const runRes = await fetch(`${SUPABASE_URL}/rest/v1/payroll_runs_v2`, {
+    // Items (with their lines) — the server validates net_pay = gross - deductions,
+    // generates the run number and computes the header totals itself.
+    const pItems = sim.items.map((item) => ({
+      worker_id: item.workerId,
+      worker_name: item.workerName,
+      cost_class: item.costClass,
+      employment_type: item.employmentType,
+      days_in_period: item.attendance.daysInPeriod,
+      present_days: item.attendance.presentDays,
+      absent_days: item.attendance.absentDays,
+      leave_days: item.attendance.leaveDays,
+      overtime_minutes: item.attendance.overtimeMinutes,
+      undertime_minutes: item.attendance.undertimeMinutes,
+      basic_rate: item.baseEarnings,
+      gross_earnings: item.grossEarnings,
+      total_deductions: item.totalDeductions,
+      net_pay: item.netPayable,
+      lines: (item.lines || []).map((l) => ({
+        wage_type_code: l.wageTypeCode,
+        wage_type_name: l.wageTypeName,
+        category: l.category,
+        qty: l.qty,
+        rate: l.rate,
+        amount: l.amount,
+      })),
+    }));
+
+    // ONE atomic RPC call — no client-side header / item / line inserts.
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_payroll_run`, {
       method: "POST",
-      headers: { ...headers(), Prefer: "return=representation" },
+      headers: headers(),
       body: JSON.stringify({
-        run_no: runNo,
-        period_id: sim.period.id,
-        run_type: "REGULAR",
-        status: "APPROVED",
-        total_workers: sim.totals.totalWorkers,
-        gross_earnings: sim.totals.grossEarnings,
-        total_deductions: sim.totals.totalDeductions,
-        net_payable: sim.totals.netPayable,
-        created_by: operatorName,
+        p_period_id: sim.period.id,
+        p_cost_class: sim.costClassFilter ?? null,
+        p_items: pItems,
+        p_operator: operatorName,
       }),
     });
 
-    if (!runRes.ok) {
-      const err = await runRes.text();
-      return { data: null, error: `Failed to create payroll run header: ${err}` };
+    const raw = await res.text();
+    let body: Record<string, unknown> | null = null;
+    try {
+      body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      body = null;
     }
 
-    const createdRuns = await runRes.json();
-    const run = createdRuns[0] as PayrollRun;
-
-    // 2. Insert Items & Lines
-    for (const item of sim.items) {
-      const itemRes = await fetch(`${SUPABASE_URL}/rest/v1/payroll_run_items`, {
-        method: "POST",
-        headers: { ...headers(), Prefer: "return=representation" },
-        body: JSON.stringify({
-          run_id: run.id,
-          worker_id: item.workerId,
-          worker_name: item.workerName,
-          cost_class: item.costClass,
-          employment_type: item.employmentType,
-          days_in_period: item.attendance.daysInPeriod,
-          present_days: item.attendance.presentDays,
-          absent_days: item.attendance.absentDays,
-          leave_days: item.attendance.leaveDays,
-          overtime_minutes: item.attendance.overtimeMinutes,
-          undertime_minutes: item.attendance.undertimeMinutes,
-          basic_rate: item.baseEarnings,
-          gross_earnings: item.grossEarnings,
-          total_deductions: item.totalDeductions,
-          net_pay: item.netPayable,
-          status: "DRAFT",
-        }),
-      });
-
-      if (itemRes.ok) {
-        const itemRows = await itemRes.json();
-        const itemId = itemRows[0].id;
-
-        const linesPayload = item.lines.map((l) => ({
-          item_id: itemId,
-          wage_type_code: l.wageTypeCode,
-          wage_type_name: l.wageTypeName,
-          category: l.category,
-          qty: l.qty,
-          rate: l.rate,
-          amount: l.amount,
-        }));
-
-        await fetch(`${SUPABASE_URL}/rest/v1/payroll_run_item_lines`, {
-          method: "POST",
-          headers: headers(),
-          body: JSON.stringify(linesPayload),
-        });
-      }
+    if (!res.ok) {
+      const message =
+        (body && (typeof body.message === "string" ? body.message : null)) ||
+        (body && typeof body.hint === "string" ? body.hint : null) ||
+        raw ||
+        "create_payroll_run RPC failed.";
+      return { data: null, error: message };
     }
+    if (!body || body.success === false) {
+      return {
+        data: null,
+        error: (typeof body?.message === "string" && body.message) || raw || "create_payroll_run RPC failed.",
+      };
+    }
+
+    const now = new Date().toISOString();
+    const run: PayrollRun = {
+      id: String(body.run_id ?? ""),
+      run_no: String(body.run_no ?? ""),
+      period_id: sim.period.id,
+      run_type: "REGULAR",
+      cost_class_filter: sim.costClassFilter ?? null,
+      status: "APPROVED",
+      total_workers: Number(body.total_workers) || sim.totals.totalWorkers,
+      gross_earnings: round2(Number(body.gross_earnings) || sim.totals.grossEarnings),
+      total_deductions: sim.totals.totalDeductions,
+      employer_cost: 0,
+      net_payable: round2(Number(body.net_payable) || sim.totals.netPayable),
+      amount_paid: 0,
+      created_by: operatorName,
+      created_at: now,
+      updated_at: now,
+      period: sim.period,
+      items: [],
+    };
 
     return { data: run, error: null };
   } catch (err) {
@@ -493,23 +596,33 @@ export async function payPayrollItems(input: {
   allowOverdraft?: boolean;
   referenceNo?: string;
   overdraftReason?: string;
+  /** Partial payments: { [item_id]: amount } → p_amounts. Defaults to full pending. */
+  amounts?: Record<string, number>;
 }): Promise<{ success: boolean; error?: string; batchNo?: string }> {
   if (!SUPABASE_URL) return { success: false, error: "Database not configured." };
   try {
+    const payload: Record<string, unknown> = {
+      p_run_id: input.runId,
+      p_item_ids: input.itemIds,
+      p_payment_method: input.paymentMethod,
+      p_account_id: input.accountId,
+      p_payment_date: input.paymentDate || new Date().toISOString().slice(0, 10),
+      p_operator_name: input.operatorName || "System Operator",
+      p_allow_overdraft: Boolean(input.allowOverdraft),
+    };
+
+    if (input.amounts && Object.keys(input.amounts).length > 0) {
+      // Partial payment overload — p_amounts only (the current RPC signature).
+      payload.p_amounts = input.amounts;
+    } else {
+      payload.p_reference_no = input.referenceNo || null;
+      payload.p_overdraft_reason = input.overdraftReason || null;
+    }
+
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/pay_payroll_items`, {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify({
-        p_run_id: input.runId,
-        p_item_ids: input.itemIds,
-        p_payment_method: input.paymentMethod,
-        p_account_id: input.accountId,
-        p_payment_date: input.paymentDate || new Date().toISOString().slice(0, 10),
-        p_operator_name: input.operatorName || "System Operator",
-        p_allow_overdraft: Boolean(input.allowOverdraft),
-        p_reference_no: input.referenceNo || null,
-        p_overdraft_reason: input.overdraftReason || null,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const body = await res.json().catch(() => ({}));
@@ -518,6 +631,51 @@ export async function payPayrollItems(input: {
     }
 
     return { success: true, batchNo: body.batch_no };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Storno of a single disbursement: flips the JE and restores the item's pending. */
+export async function reversePayrollPayment(
+  logId: string,
+  reason: string,
+  operatorName = "System Operator"
+): Promise<{ success: boolean; error?: string; reversalJournalNo?: string }> {
+  if (!SUPABASE_URL) return { success: false, error: "Database not configured." };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/reverse_payroll_payment`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        p_log_id: logId,
+        p_reason: reason,
+        p_operator: operatorName,
+      }),
+    });
+
+    const raw = await res.text();
+    let body: Record<string, unknown> | null = null;
+    try {
+      body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      body = null;
+    }
+
+    if (!res.ok) {
+      const message =
+        (body && (typeof body.message === "string" ? body.message : null)) ||
+        (body && typeof body.hint === "string" ? body.hint : null) ||
+        raw ||
+        "reverse_payroll_payment RPC failed.";
+      return { success: false, error: message };
+    }
+
+    const journal =
+      body && typeof body.reversal_journal_number === "string"
+        ? body.reversal_journal_number
+        : undefined;
+    return { success: true, ...(journal ? { reversalJournalNo: journal } : {}) };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -618,20 +776,30 @@ export async function fetchPayrollPaymentLogs(runId?: string): Promise<PayrollPa
 
 // ─── Employee Account Ledger (head-wise employee view) ────────────────────
 
-export type EmployeeMonthStatus = "PAID" | "PARTIALLY_PAID" | "PENDING";
+export type EmployeeMonthStatus = "PAID" | "PARTIALLY_PAID" | "PENDING" | "NOT_POSTED";
+
+/** Run statuses that may count towards Net / Paid / Pending. */
+const POSTED_RUN_STATUSES: PayrollRunStatus[] = ["POSTED", "PARTIALLY_PAID", "PAID", "CLOSED"];
+/** Run statuses that are only simulated / approved — not posted to the GL yet. */
+const UNPOSTED_RUN_STATUSES: PayrollRunStatus[] = ["DRAFT", "SIMULATED", "APPROVED"];
 
 export interface EmployeeLedgerMonth {
   runId: string;
   runNo: string;
   periodCode: string;
+  /** "November 2026" — human label derived from periodStart. */
+  monthLabel: string;
   periodStart: string;
   periodEnd: string;
   costClass: PayrollCostClass;
   grossEarnings: number;
   totalDeductions: number;
+  /** 0 for NOT_POSTED months — unposted runs never count towards Net. */
   netPay: number;
   amountPaid: number;
   pendingAmount: number;
+  /** Net pay awaiting posting (DRAFT / SIMULATED / APPROVED runs). */
+  unpostedAmount: number;
   status: EmployeeMonthStatus;
   lastPaymentDate: string | null;
   isLegacy: boolean;
@@ -668,6 +836,10 @@ export interface EmployeeLedgerAccount {
   totalNetPay: number;
   totalPaid: number;
   totalPending: number;
+  /** Net pay of months whose run has not been posted yet. */
+  totalUnposted: number;
+  /** Outstanding staff-loan balance for this employee. */
+  loanBalance: number;
   status: EmployeeMonthStatus;
   lastPaymentDate: string | null;
   months: EmployeeLedgerMonth[];
@@ -678,7 +850,8 @@ export function buildEmployeeLedger(
   paymentLogs: PayrollPaymentLog[] = [],
   workers: Worker[] = [],
   parties: PayrollParty[] = [],
-  crossLedgerLogs: PayrollPaymentLog[] = []
+  crossLedgerLogs: PayrollPaymentLog[] = [],
+  loans: WorkerLoan[] = []
 ): EmployeeLedgerAccount[] {
   // Combine payment logs
   const allLogs = [...paymentLogs, ...crossLedgerLogs];
@@ -692,6 +865,18 @@ export function buildEmployeeLedger(
   }
 
   const workerById = new Map<string, Worker>(workers.map((w) => [w.id, w]));
+
+  // Outstanding loan balance per employee (optional 6th argument).
+  const loanBalanceByWorker = new Map<string, number>();
+  for (const loan of loans) {
+    const balance = round2(Number(loan.current_balance) || 0);
+    if (balance <= 0) continue;
+    loanBalanceByWorker.set(
+      loan.worker_id,
+      round2((loanBalanceByWorker.get(loan.worker_id) || 0) + balance)
+    );
+  }
+
   const partyByName = new Map<string, PayrollParty>();
   const partyById = new Map<string, PayrollParty>();
   for (const p of parties) {
@@ -721,9 +906,12 @@ export function buildEmployeeLedger(
     const periodStart = run.period?.start_date || run.created_at?.slice(0, 10) || "";
     const periodEnd = run.period?.end_date || periodStart;
 
+    const unpostedRun = UNPOSTED_RUN_STATUSES.includes(run.status);
+
     for (const item of run.items || []) {
       const key = item.worker_id || item.worker_name;
       if (!key) continue;
+      if (!POSTED_RUN_STATUSES.includes(run.status) && !unpostedRun) continue;
 
       let acc = accounts.get(key);
       if (!acc) {
@@ -749,6 +937,8 @@ export function buildEmployeeLedger(
           totalNetPay: 0,
           totalPaid: 0,
           totalPending: 0,
+          totalUnposted: 0,
+          loanBalance: 0,
           status: "PENDING",
           lastPaymentDate: null,
           months: [],
@@ -758,26 +948,59 @@ export function buildEmployeeLedger(
 
       const netPay = round2(Number(item.net_pay) || 0);
       const amountPaid = round2(Number(item.amount_paid) || 0);
-      const pending = Math.max(0, round2(netPay - amountPaid));
-      const status: EmployeeMonthStatus =
-        netPay > 0 && pending <= 0 ? "PAID" : amountPaid > 0 ? "PARTIALLY_PAID" : "PENDING";
+      const isPosted = POSTED_RUN_STATUSES.includes(run.status);
 
-      acc.months.push({
-        runId: run.id,
-        runNo: run.run_no,
-        periodCode,
-        periodStart,
-        periodEnd,
-        costClass: item.cost_class || acc.costClass,
-        grossEarnings: round2(Number(item.gross_earnings) || 0),
-        totalDeductions: round2(Number(item.total_deductions) || 0),
-        netPay,
-        amountPaid,
-        pendingAmount: pending,
-        status,
-        lastPaymentDate: lastPaymentByItem.get(item.id) ?? null,
-        isLegacy: run.run_type === "LEGACY",
-      });
+      let month: EmployeeLedgerMonth;
+      if (isPosted) {
+        // Months with net_pay = 0 settled themselves — they are PENDING, not "pending".
+        const pending = Math.max(0, round2(netPay - amountPaid));
+        const status: EmployeeMonthStatus =
+          netPay <= 0 || pending <= 0
+            ? "PAID"
+            : amountPaid > 0
+              ? "PARTIALLY_PAID"
+              : "PENDING";
+        month = {
+          runId: run.id,
+          runNo: run.run_no,
+          periodCode,
+          monthLabel: monthLabelOf(periodStart),
+          periodStart,
+          periodEnd,
+          costClass: item.cost_class || acc.costClass,
+          grossEarnings: round2(Number(item.gross_earnings) || 0),
+          totalDeductions: round2(Number(item.total_deductions) || 0),
+          netPay,
+          amountPaid,
+          pendingAmount: pending,
+          unpostedAmount: 0,
+          status,
+          lastPaymentDate: lastPaymentByItem.get(item.id) ?? null,
+          isLegacy: run.run_type === "LEGACY",
+        };
+      } else {
+        // Draft / simulated / approved — visible, but outside Net / Paid / Pending.
+        month = {
+          runId: run.id,
+          runNo: run.run_no,
+          periodCode,
+          monthLabel: monthLabelOf(periodStart),
+          periodStart,
+          periodEnd,
+          costClass: item.cost_class || acc.costClass,
+          grossEarnings: round2(Number(item.gross_earnings) || 0),
+          totalDeductions: round2(Number(item.total_deductions) || 0),
+          netPay: 0,
+          amountPaid: 0,
+          pendingAmount: 0,
+          unpostedAmount: netPay,
+          status: "NOT_POSTED",
+          lastPaymentDate: null,
+          isLegacy: run.run_type === "LEGACY",
+        };
+      }
+
+      acc.months.push(month);
     }
   }
 
@@ -813,6 +1036,8 @@ export function buildEmployeeLedger(
         totalNetPay: 0,
         totalPaid: 0,
         totalPending: 0,
+        totalUnposted: 0,
+        loanBalance: 0,
         status: "PAID",
         lastPaymentDate: log.payment_date,
         months: [],
@@ -825,6 +1050,7 @@ export function buildEmployeeLedger(
       runId: log.id,
       runNo: log.disbursement_batch_no || "CRV",
       periodCode: log.run?.period?.period_code || "CROSS-LEDGER",
+      monthLabel: monthLabelOf(log.payment_date),
       periodStart: log.payment_date,
       periodEnd: log.payment_date,
       costClass: "ADMIN",
@@ -833,6 +1059,7 @@ export function buildEmployeeLedger(
       netPay: logAmt,
       amountPaid: logAmt,
       pendingAmount: 0,
+      unpostedAmount: 0,
       status: "PAID",
       lastPaymentDate: log.payment_date,
       isLegacy: false,
@@ -865,12 +1092,15 @@ export function buildEmployeeLedger(
         totalNetPay: opening,
         totalPaid: 0,
         totalPending: opening,
+        totalUnposted: 0,
+        loanBalance: 0,
         status: opening > 0 ? "PENDING" : "PAID",
         lastPaymentDate: null,
         months: opening > 0 ? [{
           runId: `ob-${p.id}`,
           runNo: "OPENING",
           periodCode: "OPENING-BAL",
+          monthLabel: monthLabelOf("2026-01-01"),
           periodStart: "2026-01-01",
           periodEnd: "2026-01-01",
           costClass: "ADMIN",
@@ -879,6 +1109,7 @@ export function buildEmployeeLedger(
           netPay: opening,
           amountPaid: 0,
           pendingAmount: opening,
+          unpostedAmount: 0,
           status: "PENDING",
           lastPaymentDate: null,
           isLegacy: false,
@@ -892,7 +1123,16 @@ export function buildEmployeeLedger(
     acc.totalNetPay = round2(acc.months.reduce((s, m) => s + m.netPay, 0));
     acc.totalPaid = round2(acc.months.reduce((s, m) => s + m.amountPaid, 0));
     acc.totalPending = round2(acc.months.reduce((s, m) => s + m.pendingAmount, 0));
-    acc.status = acc.totalPending > 0 ? (acc.totalPaid > 0 ? "PARTIALLY_PAID" : "PENDING") : "PAID";
+    acc.totalUnposted = round2(acc.months.reduce((s, m) => s + m.unpostedAmount, 0));
+    acc.loanBalance = round2(loanBalanceByWorker.get(acc.workerId) || 0);
+    acc.status =
+      acc.totalPending > 0
+        ? acc.totalPaid > 0
+          ? "PARTIALLY_PAID"
+          : "PENDING"
+        : acc.totalUnposted > 0
+          ? "NOT_POSTED"
+          : "PAID";
     const paidDates = acc.months.map((m) => m.lastPaymentDate).filter(Boolean) as string[];
     acc.lastPaymentDate = paidDates.sort().at(-1) ?? null;
     return acc;
@@ -961,24 +1201,6 @@ export interface PayrollEntry {
   payment_account?: Account | null;
 }
 
-export async function fetchPayrollEntries(): Promise<PayrollEntry[]> {
-  if (!SUPABASE_URL) return [];
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/payroll_entries?select=*,expense_account:accounts_chart!payroll_entries_expense_account_id_fkey(id,account_code,account_name,account_type),payment_account:accounts_chart!payroll_entries_payment_account_id_fkey(id,account_code,account_name,account_type)&order=payroll_date.desc`,
-      { headers: headers() }
-    );
-    if (!res.ok) {
-      const fb = await fetch(`${SUPABASE_URL}/rest/v1/payroll_entries?order=payroll_date.desc`, { headers: headers() });
-      if (!fb.ok) return [];
-      return (await fb.json()) as PayrollEntry[];
-    }
-    return (await res.json()) as PayrollEntry[];
-  } catch {
-    return [];
-  }
-}
-
 export interface PayrollSummary {
   total: number;
   totalCogs: number;
@@ -992,39 +1214,6 @@ export interface PayrollSummary {
   monthTotal: number;
 }
 
-export function calculatePayrollSummary(entries: PayrollEntry[]): PayrollSummary {
-  const today = new Date().toISOString().slice(0, 10);
-  const monthStart = today.slice(0, 7) + "-01";
-
-  const summary: PayrollSummary = {
-    total: 0,
-    totalCogs: 0,
-    totalAdmin: 0,
-    totalSalaries: 0,
-    totalWages: 0,
-    totalCash: 0,
-    totalBank: 0,
-    count: 0,
-    todayTotal: 0,
-    monthTotal: 0,
-  };
-
-  for (const e of entries) {
-    summary.total += e.amount;
-    summary.count++;
-    if (e.payroll_type === "PRODUCTION_COGS") summary.totalCogs += e.amount;
-    else summary.totalAdmin += e.amount;
-    if (e.employment_type === "PERMANENT_SALARY") summary.totalSalaries += e.amount;
-    else summary.totalWages += e.amount;
-    if (e.payment_method === "CASH") summary.totalCash += e.amount;
-    else summary.totalBank += e.amount;
-    if (e.payroll_date === today) summary.todayTotal += e.amount;
-    if (e.payroll_date >= monthStart) summary.monthTotal += e.amount;
-  }
-
-  return summary;
-}
-
 export async function createPayrollEntry(input: any): Promise<{ data: any; error: string | null }> {
   return { data: null, error: "Legacy direct payroll entry retired. Use SAP Payroll Runs." };
 }
@@ -1032,11 +1221,6 @@ export async function createPayrollEntry(input: any): Promise<{ data: any; error
 export async function updatePayrollEntry(id: string, input: any): Promise<{ data: any; error: string | null }> {
   return { data: null, error: "Legacy direct payroll entry retired. Use SAP Payroll Runs." };
 }
-
-export async function deletePayrollEntry(id: string): Promise<{ error: string | null }> {
-  return { error: "Direct deletion is disabled. Use Storno Reversal on the payroll run." };
-}
-
 
 /** Fetches customer receipt vouchers and payment vouchers for cross-ledger payroll mapping. */
 export async function fetchPayrollCrossLedgerTransactions(): Promise<PayrollPaymentLog[]> {

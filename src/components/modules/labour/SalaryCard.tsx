@@ -8,9 +8,8 @@ import {
   type TimeLogMap,
   type WorkerLoan,
 } from "@/lib/supabase/labour";
-import { calculateEarnedSalary, formatMinutes } from "@/lib/salary";
+import { calculateGrossToNetPayslip, formatMinutes } from "@/lib/salary";
 import { exportWorkerPayslipPDF } from "@/lib/pdf-exporter";
-import { salaryAlreadyPaid } from "@/lib/supabase/payment-vouchers";
 
 interface Props {
   worker: Worker;
@@ -21,18 +20,19 @@ interface Props {
   month: number;
   /** Bump to re-fetch loans (e.g. after issue/repay in LoanTrackingPanel). */
   refreshKey?: number;
-  /** Optional callback after a successful salary payment (parent can refresh). */
+  /** Optional callback after a salary-related action (parent can refresh). */
   onPaid?: () => void;
 }
 
-export default function SalaryCard({ worker, attendance, timeLogs = {}, year, month, refreshKey = 0, onPaid }: Props) {
+export default function SalaryCard({ worker, attendance, timeLogs = {}, year, month, refreshKey = 0 }: Props) {
   const [loans, setLoans] = useState<WorkerLoan[] | null>(null);
   const [printing, setPrinting] = useState(false);
-  const [alreadyPaid, setAlreadyPaid] = useState(false);
-  const [payCheckLoading, setPayCheckLoading] = useState(true);
 
   const periodRef = `SALARY-${year}-${String(month).padStart(2, "0")}`;
-  const salary = calculateEarnedSalary(worker, attendance, year, month, timeLogs);
+  const monthLabel = new Date(year, month - 1).toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -45,29 +45,28 @@ export default function SalaryCard({ worker, attendance, timeLogs = {}, year, mo
     };
   }, [worker.id, refreshKey]);
 
-  useEffect(() => {
-    let cancelled = false;
-    salaryAlreadyPaid(worker.full_name, periodRef).then((paid) => {
-      if (cancelled) return;
-      setAlreadyPaid(paid);
-      setPayCheckLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [worker.full_name, periodRef, refreshKey]);
-
   const loansLoading = loans === null;
   const loanList = loans ?? [];
   const hasLoan = loanList.length > 0;
   const loanTaken = loanList.reduce((a, l) => a + l.original_loan_amount, 0);
   const loanRemaining = loanList.reduce((a, l) => a + l.current_balance, 0);
-  const monthLabel = new Date(year, month - 1).toLocaleString("en-US", {
-    month: "long",
-    year: "numeric",
+
+  // The month's first → last day IS the payroll period, so this card runs the
+  // exact same gross-to-net engine as /payroll (loan recovery + caps included).
+  // What is shown here is what Payroll will disburse — one engine, no drift.
+  const period = {
+    start: `${year}-${String(month).padStart(2, "0")}-01`,
+    end: `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`,
+  };
+  const slip = calculateGrossToNetPayslip(worker, attendance, period, {
+    timeLogs,
+    activeLoans: loanList,
   });
-  const paidDays = salary.presentDays + salary.leaveDays;
-  const canPay = !alreadyPaid && !payCheckLoading && salary.earnedSalary > 0;
+  const att = slip.attendance;
+  const baseLine = slip.lines.find((l) => l.wageTypeCode === "BASIC" || l.wageTypeCode === "DAILY_WAGE");
+  const paidDays = baseLine?.qty ?? 0;
+  const baseRate = baseLine?.rate ?? 0;
+  const baseLabel = slip.employmentType === "PERMANENT_SALARY" ? "Basic salary" : "Daily wage";
 
   async function handlePrint() {
     if (printing) return;
@@ -87,7 +86,7 @@ export default function SalaryCard({ worker, attendance, timeLogs = {}, year, mo
             Salary — {monthLabel}
           </h2>
           <p className="text-caption text-muted mt-0.5">
-            Computed from attendance, overtime & undertime · loans are not deducted
+            Same gross-to-net engine as Payroll · loan recovery included · paid from /payroll
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -116,7 +115,7 @@ export default function SalaryCard({ worker, attendance, timeLogs = {}, year, mo
       </div>
 
       <div className="mb-3 text-caption text-secondary bg-bg-subtle border border-border-subtle rounded-lg px-3 py-2 flex items-center justify-between">
-        <span>Unified Payroll: Salary disbursements and accounting postings are managed through the central Payroll Runs wizard.</span>
+        <span>Salaries are disbursed only through the Payroll Runs wizard — this card is the live preview of that payslip.</span>
         <span className="font-mono text-caption text-muted">{periodRef}</span>
       </div>
 
@@ -130,41 +129,40 @@ export default function SalaryCard({ worker, attendance, timeLogs = {}, year, mo
         <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
           <p className="text-[10px] text-muted uppercase">Present</p>
           <p className="text-body font-mono font-medium text-status-optimal mt-0.5">
-            {salary.presentDays} day{salary.presentDays === 1 ? "" : "s"}
+            {att.presentDays} day{att.presentDays === 1 ? "" : "s"}
           </p>
         </div>
         <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
           <p className="text-[10px] text-muted uppercase">Absent</p>
           <p className="text-body font-mono font-medium text-status-alert mt-0.5">
-            {salary.absentDays} day{salary.absentDays === 1 ? "" : "s"}
+            {att.absentDays} day{att.absentDays === 1 ? "" : "s"}
           </p>
         </div>
         <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
           <p className="text-[10px] text-muted uppercase">Leave</p>
           <p className="text-body font-mono font-medium text-status-amber mt-0.5">
-            {salary.leaveDays} day{salary.leaveDays === 1 ? "" : "s"}
+            {att.leaveDays} day{att.leaveDays === 1 ? "" : "s"}
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle flex flex-col justify-center">
-          <p className="text-[10px] text-muted uppercase">Earned Salary — {monthLabel}</p>
+          <p className="text-[10px] text-muted uppercase">Gross Earnings — {monthLabel}</p>
           <p className="text-num-kpi font-mono font-bold text-foreground mt-1">
-            PKR {salary.earnedSalary.toLocaleString()}
+            PKR {slip.grossEarnings.toLocaleString()}
           </p>
           <p className="text-[10px] text-muted mt-1">
-            Basic: {paidDays} paid day{paidDays === 1 ? "" : "s"} (P {salary.presentDays} + L{" "}
-            {salary.leaveDays}) × PKR {salary.dailyRate.toFixed(2)}/day = PKR{" "}
-            {salary.basicSalary.toLocaleString()}
+            {baseLabel}: {paidDays} paid day{paidDays === 1 ? "" : "s"} (P {att.presentDays} + L{" "}
+            {att.leaveDays}) × PKR {baseRate.toFixed(2)}/day = PKR{" "}
+            {slip.baseEarnings.toLocaleString()}
           </p>
           <p className="text-[10px] text-muted mt-0.5">
-            Overtime: {formatMinutes(salary.overtimeMinutes)} × PKR{" "}
-            {salary.overtimeRate.toLocaleString()}/hr = + PKR {salary.overtimePay.toLocaleString()}
+            Overtime: {formatMinutes(att.overtimeMinutes)} = + PKR {slip.overtimePay.toLocaleString()}
           </p>
           <p className="text-[10px] text-muted mt-0.5">
-            Undertime: {formatMinutes(salary.undertimeMinutes)} × PKR {salary.hourlyRate.toFixed(2)}/hr = − PKR{" "}
-            {salary.undertimeDeduction.toLocaleString()}
+            Undertime: {formatMinutes(att.undertimeMinutes)} = − PKR{" "}
+            {slip.undertimeDeductions.toLocaleString()}
           </p>
         </div>
         <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
@@ -195,11 +193,33 @@ export default function SalaryCard({ worker, attendance, timeLogs = {}, year, mo
             </div>
           </div>
           <p className="text-[10px] text-muted mt-2 border-t border-border-subtle pt-2">
-            Informational only — not deducted from salary
+            Recovered from this month&apos;s net pay:{" "}
+            <span className="font-mono text-foreground">PKR {slip.loanRecoveryDeduction.toLocaleString()}</span>
+            {slip.loanRecoveryDeduction === 0 && hasLoan ? " (capped at 50% of net / loan rate)" : ""}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+        <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
+          <p className="text-[10px] text-muted uppercase">Total Deductions</p>
+          <p className="text-body font-mono font-medium text-status-alert mt-0.5">
+            PKR {slip.totalDeductions.toLocaleString()}
+          </p>
+        </div>
+        <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
+          <p className="text-[10px] text-muted uppercase">Loan Recovery</p>
+          <p className="text-body font-mono font-medium text-foreground mt-0.5">
+            PKR {slip.loanRecoveryDeduction.toLocaleString()}
+          </p>
+        </div>
+        <div className="p-3 rounded-lg bg-bg-subtle border border-border-subtle">
+          <p className="text-[10px] text-muted uppercase">Net Pay</p>
+          <p className="text-num-kpi font-mono font-bold text-foreground mt-1">
+            PKR {slip.netPayable.toLocaleString()}
           </p>
         </div>
       </div>
     </div>
   );
 }
-

@@ -22,9 +22,18 @@ import {
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { capitalizeFirst } from "@/lib/utils";
 
+/**
+ * Voucher types this form can create or edit.
+ * SALARY_PAYMENT is deliberately absent: salaries leave the treasury only
+ * through the Payroll module (/payroll → Pay Runs). Legacy Salary Payment
+ * vouchers stay readable/exportable in the list, but are never re-savable here.
+ */
+const SELECTABLE_VOUCHER_TYPES = ["CASH_PAYMENT", "PARTY_PAYMENT", "BANK_PAYMENT"] as const;
+type SelectableVoucherType = (typeof SELECTABLE_VOUCHER_TYPES)[number];
+
 interface Props {
   open: boolean;
-  voucherType: "CASH_PAYMENT" | "PARTY_PAYMENT" | "BANK_PAYMENT";
+  voucherType: SelectableVoucherType;
   onClose: () => void;
   onCreated?: (voucher: PaymentVoucher) => void;
   /** When provided, the form operates in edit mode with pre-filled data. */
@@ -216,6 +225,15 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
 
   async function submitVoucher() {
     setError("");
+
+    // SALARY_PAYMENT can never be created (the type union excludes it) and never
+    // re-saved: legacy Salary Payment rows opened from the list stay read-only.
+    if (editVoucher && !(SELECTABLE_VOUCHER_TYPES as readonly string[]).includes(editVoucher.voucher_type)) {
+      setError(
+        `This is a legacy ${editVoucher.voucher_type.replace("_", " ")} voucher — salary payments are booked and reversed only through the Payroll module (/payroll). Use Print / PDF for this voucher.`
+      );
+      return;
+    }
 
     if (!payeeName.trim()) {
       setError("Payee name is required.");

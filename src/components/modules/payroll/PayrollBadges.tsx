@@ -21,6 +21,10 @@ const STATUS_STYLES: Record<EmployeeMonthStatus, { label: string; className: str
     label: "Pending",
     className: "bg-status-alert/10 text-status-alert border-status-alert/30",
   },
+  NOT_POSTED: {
+    label: "Not Posted",
+    className: "bg-slate-500/10 text-slate-500 border-slate-500/30",
+  },
 };
 
 const HEAD_STYLES: Record<PayrollCostClass, { label: string; className: string }> = {

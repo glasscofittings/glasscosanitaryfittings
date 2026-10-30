@@ -5,6 +5,7 @@ import {
   fetchWorkers,
   fetchAttendance,
   upsertAttendance,
+  deleteAttendance,
   buildAttendanceMap,
   buildTimeLogMap,
   deleteWorker,
@@ -96,29 +97,43 @@ export default function LabourPage() {
 
   async function handleToggleAttendance(date: string) {
     if (!selectedWorker) return;
-    const current = attendance[selectedWorker.id]?.[date];
+    const workerId = selectedWorker.id;
+    const current = attendance[workerId]?.[date];
     const next =
       current === undefined ? "P" :
       current === "P" ? "A" :
       current === "A" ? "L" : undefined;
 
     if (next === undefined) {
+      // P → A → L → blank: blank means the attendance row is deleted.
+      const ok = await deleteAttendance(workerId, date);
+      if (!ok) {
+        // Keep the old value — the server never accepted the delete.
+        toast.error(`Failed to clear attendance for ${date}`);
+        return;
+      }
+      clearTimeLog(workerId, date);
       setAttendance((prev) => {
         const copy = { ...prev };
-        if (copy[selectedWorker.id]) {
-          const inner = { ...copy[selectedWorker.id] };
+        if (copy[workerId]) {
+          const inner = { ...copy[workerId] };
           delete inner[date];
-          copy[selectedWorker.id] = inner;
+          copy[workerId] = inner;
         }
         return copy;
       });
     } else {
-      await upsertAttendance(selectedWorker.id, date, next);
-      if (next !== "P") clearTimeLog(selectedWorker.id, date);
+      const saved = await upsertAttendance(workerId, date, next);
+      if (!saved) {
+        // Keep the old value — the save failed (network / RLS / missing row).
+        toast.error(`Failed to save attendance for ${date}`);
+        return;
+      }
+      if (next !== "P") clearTimeLog(workerId, date);
       setAttendance((prev) => ({
         ...prev,
-        [selectedWorker.id]: {
-          ...(prev[selectedWorker.id] ?? {}),
+        [workerId]: {
+          ...(prev[workerId] ?? {}),
           [date]: next,
         },
       }));
