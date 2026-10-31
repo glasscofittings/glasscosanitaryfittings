@@ -46,15 +46,10 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
   const { profile } = useAuth();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [payeeName, setPayeeName] = useState("");
-  const [payeeNameUr, setPayeeNameUr] = useState("");
   const [payeeParty, setPayeeParty] = useState<Party | null>(null);
-  // Last value we wrote into the Urdu field ourselves; lets a new pick replace it without
-  // clobbering an Urdu name the operator typed by hand.
-  const autoUrduRef = useRef("");
   const [payeeAddress, setPayeeAddress] = useState("");
   const [cnicNtn, setCnicNtn] = useState("");
   const [purpose, setPurpose] = useState("");
-  const [purposeUr, setPurposeUr] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
   const [debitAccountId, setDebitAccountId] = useState("");
   const [creditAccountId, setCreditAccountId] = useState("");
@@ -149,12 +144,9 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
     if (!open || !editVoucher || accounts.length === 0) return;
     const t = setTimeout(async () => {
       setPayeeName(editVoucher.payee_name);
-      setPayeeNameUr(editVoucher.payee_name_ur || editVoucher.payee_name);
-      autoUrduRef.current = editVoucher.payee_name_ur || editVoucher.payee_name;
       setPayeeAddress(editVoucher.payee_address || "");
       setCnicNtn(editVoucher.cnic_ntn || "");
       setPurpose(editVoucher.purpose || "");
-      setPurposeUr(editVoucher.purpose_ur || "");
       setReferenceNo(editVoucher.reference_no || "");
       setDebitAccountId(editVoucher.debit_account_id || "");
       setCreditAccountId(editVoucher.credit_account_id || "");
@@ -322,11 +314,9 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
         {
           voucher_date: voucherDate,
           payee_name: payeeName.trim(),
-          payee_name_ur: payeeNameUr.trim() || payeeName.trim(),
           payee_address: payeeAddress.trim() || undefined,
           cnic_ntn: cnicNtn.trim() || undefined,
           purpose: purpose.trim() || undefined,
-          purpose_ur: purposeUr.trim() || undefined,
           reference_no: referenceNo.trim() || undefined,
           // Both sides always set (validation above); null kept as a defensive fallback
           debit_account_id: debitAccountId || null,
@@ -361,11 +351,9 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
         voucher_type: voucherType,
         voucher_date: voucherDate,
         payee_name: payeeName.trim(),
-        payee_name_ur: payeeNameUr.trim() || payeeName.trim(),
         payee_address: payeeAddress.trim() || undefined,
         cnic_ntn: cnicNtn.trim() || undefined,
         purpose: purpose.trim() || undefined,
-        purpose_ur: purposeUr.trim() || undefined,
         reference_no: referenceNo.trim() || undefined,
         debit_account_id: debitAccountId || undefined,
         credit_account_id: creditAccountId || undefined,
@@ -396,13 +384,10 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
 
   function resetForm() {
     setPayeeName("");
-    setPayeeNameUr("");
-    autoUrduRef.current = "";
     setPayeeParty(null);
     setPayeeAddress("");
     setCnicNtn("");
     setPurpose("");
-    setPurposeUr("");
     setReferenceNo("");
     setDebitAccountId("");
     setCreditAccountId("");
@@ -447,26 +432,11 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
               onChange={setPayeeName}
               onMatchChange={setPayeeParty}
               onSelect={(party) => {
-                // CRM contacts carry no Urdu name; mirror the English name unless the operator typed one.
-                if (!payeeNameUr.trim() || payeeNameUr === autoUrduRef.current) {
-                  setPayeeNameUr(party.name);
-                  autoUrduRef.current = party.name;
-                }
                 if (!payeeAddress.trim() && party.address) setPayeeAddress(party.address);
                 if (!cnicNtn.trim() && party.ntn_strn) setCnicNtn(party.ntn_strn);
               }}
               placeholder="Start typing a CRM contact, or enter a new name"
               autoFocus
-            />
-            <input
-              type="text"
-              value={payeeNameUr}
-              onChange={(e) => setPayeeNameUr(capitalizeFirst(e.target.value))}
-              className="glass-input w-full mt-2 text-right"
-              dir="rtl"
-              lang="ur"
-              placeholder="وصول کنندہ کا نام (اردو) — اختیاری"
-              title="Payee name in Urdu (optional) — printed under the English name on the PDF"
             />
           </div>
 
@@ -538,16 +508,6 @@ export default function PaymentVoucherForm({ open, voucherType, onClose, onCreat
                 onChange={(e) => setPurpose(capitalizeFirst(e.target.value))}
                 className="glass-input w-full"
                 placeholder="e.g. Raw material purchase"
-              />
-              <input
-                type="text"
-                value={purposeUr}
-                onChange={(e) => setPurposeUr(capitalizeFirst(e.target.value))}
-                className="glass-input w-full mt-2 text-right"
-                dir="rtl"
-                lang="ur"
-                placeholder="مقصد (اردو) — اختیاری"
-                title="Purpose in Urdu (optional) — printed under the English purpose on the PDF"
               />
             </div>
             <div>

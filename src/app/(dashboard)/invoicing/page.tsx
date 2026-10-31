@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { fetchCustomers, fetchInvoices, fetchDispatchRecords, attachDispatchLineItems, dispatchItemsToInvoiceItems, deleteInvoice, approveDispatch, deleteDispatchRecord, type Party, type SalesInvoice, type DispatchLineItem, type DispatchRecord } from "@/lib/supabase/invoicing";
+import { fetchCustomers, fetchInvoices, fetchDispatchRecords, attachDispatchLineItems, dispatchItemsToInvoiceItems, deleteInvoice, deleteDispatchRecord, type Party, type SalesInvoice, type DispatchLineItem, type DispatchRecord } from "@/lib/supabase/invoicing";
 import { fetchInvoicesWithDispatch, generateSlipInvoiceHTML, triggerSlipPrint, getInvoiceTaxLines, type DispatchInvoice } from "@/lib/supabase/catalog";
 import { fetchPendingPurchaseInvoices } from "@/lib/supabase/purchase-invoices";
 import InvoiceGenerator from "@/components/modules/invoicing/InvoiceGenerator";
@@ -44,7 +44,6 @@ export default function InvoicingPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SalesInvoice | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [approvingId, setApprovingId] = useState<string | null>(null);
   const [editDispatch, setEditDispatch] = useState<DispatchRecord | null>(null);
   const [deleteDispatchTarget, setDeleteDispatchTarget] = useState<DispatchRecord | null>(null);
   const [deletingDispatch, setDeletingDispatch] = useState(false);
@@ -161,40 +160,6 @@ export default function InvoicingPage() {
       res.stockRestored ? "stock returned to inventory" : null,
     ].filter(Boolean).join(", ");
     toast.success(notes ? `${target.invoice_number} deleted — ${notes}` : `${target.invoice_number} deleted`);
-  }
-
-  /**
-   * Approve: one RPC flips the dispatch to 'approved', deducts stock, and
-   * posts the customer's ledger debit in a single database transaction.
-   */
-  async function handleApproveDispatch(record: DispatchRecord) {
-    if (approvingId) return;
-    setApprovingId(record.id);
-    try {
-      let operatorName: string;
-      try {
-        operatorName = await useOperatorStore.getState().open("Approve Dispatch");
-      } catch {
-        return; // operator cancelled attribution — nothing may happen
-      }
-      const result = await approveDispatch(
-        record.id,
-        operatorName,
-        process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
-      );
-      if (!result.success) {
-        toast.error(`Could not approve ${record.invoice_number}: ${result.error ?? "unknown error"}`);
-        return;
-      }
-      toast.success(
-        result.alreadyApproved
-          ? `${record.invoice_number} was already approved.`
-          : `Dispatch approved — stock deducted and customer ledger debited for ${record.invoice_number}.`,
-      );
-      handleRefresh();
-    } finally {
-      setApprovingId(null);
-    }
   }
 
   async function confirmDeleteDispatch() {
@@ -350,8 +315,6 @@ export default function InvoicingPage() {
           )}
           <DispatchHistoryTable
             records={dispatchRecords}
-            approvingId={approvingId}
-            onApprove={handleApproveDispatch}
             onEdit={setEditDispatch}
             onDelete={setDeleteDispatchTarget}
           />
@@ -477,20 +440,12 @@ export default function InvoicingPage() {
                   <strong className="font-mono text-foreground">{deleteDispatchTarget.invoice_number}</strong>?
                   It cannot be undone.
                 </p>
-                {(deleteDispatchTarget.status ?? "dispatched") !== "pending_approval" && (
-                  <p className="text-status-amber bg-status-amber/10 border border-status-amber/20 rounded-lg px-3 py-2">
+                <p className="text-status-amber bg-status-amber/10 border border-status-amber/20 rounded-lg px-3 py-2">
                     This dispatch is <strong>{deleteDispatchTarget.status ?? "dispatched"}</strong>. Its
                     stock deduction and customer ledger entry will be reversed (when present) before
                     the entry is removed, so inventory and books stay balanced.
                   </p>
-                )}
-                {(deleteDispatchTarget.status ?? "dispatched") === "pending_approval" && (
-                  <p className="text-secondary">
-                    This dispatch is awaiting approval — no stock or ledger adjustments were made,
-                    so only the dispatch entry itself will be removed.
-                  </p>
-                )}
-              </div>
+                </div>
               <div className="p-5 border-t border-border-subtle flex gap-3 justify-end">
                 <button
                   onClick={() => setDeleteDispatchTarget(null)}

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
-import { type SalesInvoice, type DispatchLineItem, triggerPrint, generateInvoiceHTML, createDispatchRecord, findDispatchRecordByInvoice, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
+import { type SalesInvoice, type DispatchLineItem, triggerPrint, generateInvoiceHTML, createDispatchRecord, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
 import { useOperatorStore } from "@/lib/store/useOperatorStore";
 import { formatPKR } from "@/lib/utils/formatters";
 
@@ -68,9 +68,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
             discount_pkr: i.discount_pkr,
           }));
 
-    let dispatchRecord = await findDispatchRecordByInvoice(invoice.id);
-    if (!dispatchRecord) {
-      dispatchRecord = await createDispatchRecord({
+    const dispatchRecord = await createDispatchRecord({
         invoice_id: invoice.id,
         invoice_number: invoice.invoice_number,
         customer_id: invoice.customer_id,
@@ -84,13 +82,12 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
         line_items: dispatchLineItems,
         operator_name: operatorName,
         device_node: process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
-        status: "pending_approval",
+        status: "dispatched",
         dispatch_date: new Date().toISOString().slice(0, 10),
       });
-    }
     if (!dispatchRecord) {
       toast.warning(
-        `Invoice ${invoice.invoice_number} printed, but its dispatch record could not be saved — reprint to retry, otherwise it cannot be approved.`
+        `Invoice ${invoice.invoice_number} printed, but its dispatch record could not be saved.`
       );
     }
 
@@ -100,9 +97,8 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
     setPrinting(true);
     setStep("printing");
 
-    // Nothing recalculates the invoice during print (posting happens at
-    // approval), so print straight from the saved row — always carrying the
-    // invoice's own items for the template.
+    // Nothing recalculates the invoice during print, so use the saved row —
+    // always carrying the invoice's own items for the template.
     const savedInvoice: SalesInvoice = {
       ...invoice,
       items:
@@ -250,7 +246,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
               status={step === "idle" ? "pending" : step === "posting" ? "done" : step === "posted" || step === "printing" || step === "print-done" ? "done" : step === "error" ? "error" : "pending"}
             />
             <StepIndicator
-              label="Record dispatch (pending approval)"
+              label="Record dispatch"
               status={step === "idle" ? "pending" : step === "posting" ? "active" : step === "posted" || step === "printing" || step === "print-done" ? "done" : step === "error" && !posting ? "error" : "pending"}
             />
             <StepIndicator
@@ -273,7 +269,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
 
           {step === "print-done" && (
             <div className="bg-status-optimal/10 border border-status-optimal/20 rounded-lg p-3 text-caption text-status-optimal">
-              <p className="font-medium">Invoice printed and recorded as a dispatch. Stock and the customer ledger update only when it is approved from Dispatch History.</p>
+              <p className="font-medium">Invoice printed and recorded as a dispatch.</p>
             </div>
           )}
 

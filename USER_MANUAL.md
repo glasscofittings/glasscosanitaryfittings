@@ -59,7 +59,7 @@ There are two kinds of users:
 
 - It is **not** connected to a bank — "payment" means *we recorded* a payment, not that money physically moved.
 - It does **not** automatically send anything to the tax authority (FBR). It prepares the numbers; a human files them.
-- It is **not** multi-language for the whole screen (English). Only some PDFs can be printed bilingually (English + Urdu) if a translation key is set up.
+- It is **not** multi-language — the whole screen and every PDF are English-only.
 
 ---
 
@@ -119,7 +119,6 @@ npm run dev          # opens http://localhost:3000 → redirects to /login
 | `NEXT_PUBLIC_SUPABASE_URL` | Where the database lives. Without it the app shows empty/zero screens. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The public key the browser uses to talk to that database. |
 | `NEXT_PUBLIC_MASTER_APP_PIN` | 4-digit master PIN (its keypad screen exists but is not wired up yet — see Part 12). |
-| `GEMINI_API_KEY` / `NEXT_PUBLIC_GEMINI_API_KEY` | Optional. English→Urdu translation for bilingual PDFs. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Optional, server-side only. Not required for normal use. |
 
 **Database:** the schema lives in `supabase/schema-consolidated.sql` (run once in the Supabase SQL Editor on a fresh project), with 60+ incremental files in `supabase/migrations/`. Seed/demo data is in `supabase/migrations/99_seed_demo_data.sql`.
@@ -280,9 +279,9 @@ The left sidebar has **18 items** (plus Settings at the bottom). Some menu names
 
 **For:** every rupee going *out* — cash, bank, supplier, or salary.
 **Voucher types:** **CPV** Cash Payment · **BPV** Bank Payment · **PPV** Party Payment · **SPV** Salary Payment.
-**Buttons:** **+ Cash Payment**, **+ Bank Payment**, **+ Party Payment**, **Export PDF** (bilingual EN/UR).
+**Buttons:** **+ Cash Payment**, **+ Bank Payment**, **+ Party Payment**, **Export PDF**.
 **Tabs:** All / Cash (CPV) / Bank (BPV) / Party (PPV) / Salary (SPV); search by voucher #, payee or purpose.
-**Row actions:** **Download PDF** (bilingual), **Edit**, **Delete**.
+**Row actions:** **Download PDF**, **Edit**, **Delete**.
 **Accounting effect:** DR the account you chose · CR 1000 Cash or 1002 Bank — and a journal entry is created automatically.
 
 ## 4.7 Ledger / Accounts (`/ledger`) — the accounting room
@@ -543,15 +542,13 @@ Almost every screen has an **Export PDF** button in its header, and tables often
 
 | What | Where |
 |---|---|
-| Sales invoice print / bilingual (EN+UR) invoice | Dispatch / Sales → row **Post** → Post & Print drawer → **Print / Save PDF** |
-| Receipt & payment vouchers (bilingual) | Payment Vouchers → row **PDF**; Customer Receipts table |
+| Sales invoice print / PDF invoice | Dispatch / Sales → row **Post** → Post & Print drawer → **Print / Save PDF** |
+| Receipt & payment vouchers | Payment Vouchers → row **PDF**; Customer Receipts table |
 | Journal entry, trial balance, P&L, balance sheet | Ledger → **Export PDF** (and per-tab export icons) |
 | Party statement | CRM → Details → print/PDF; Trial Balance → **View Ledger** → Print/PDF |
 | Stock card, product list | Inventory / Catalog row **PDF**, page **Export PDF** |
 | Payroll payslips | Payroll → expand a run |
 | Backups report | `/settings/backups` → **Export PDF Report** |
-
-Urdu translation only happens if the Gemini translation key is configured; otherwise the PDF stays in English.
 
 ---
 

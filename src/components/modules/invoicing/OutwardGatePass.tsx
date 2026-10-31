@@ -2,7 +2,6 @@
 
 import { type SalesInvoice, generateInvoiceHTML, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
-import { UR, URDU_HTML_STYLES, urUnder } from "@/lib/pdf-urdu";
 import { getCompanyLogoHtml } from "@/lib/company-settings";
 import { COMPANY_HEADER, COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME, SERIF_FONT_FAMILY_CSS } from "@/lib/branding";
 
@@ -55,7 +54,6 @@ export default function OutwardGatePass({ invoice, open, onClose }: Props) {
       <!DOCTYPE html>
       <html><head><meta charset="utf-8"><title>OGP - ${invoice!.invoice_number}</title>
       <style>
-${URDU_HTML_STYLES}
         body{font-family:${SERIF_FONT_FAMILY_CSS};margin:0;padding:20px;color:#0f172a;}
         @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap;}
         @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
@@ -82,28 +80,28 @@ ${URDU_HTML_STYLES}
           ${getCompanyLogoHtml({ width: 44, height: 44 })}
           <div>
             <div class="brand">${COMPANY_HEADER}</div>
-            <div class="title">${urUnder("Outward Gate Pass & Tax Summary", UR.outwardGatePass)}</div>
+            <div class="title">Outward Gate Pass & Tax Summary</div>
           </div>
         </div>
         </div>
         <div style="text-align:right;font-size:12px;color:#64748b;">
           <div style="font-weight:600;color:#0f172a;">OGP-${invoice!.invoice_number}</div>
-          <div>${urUnder(`Date: ${new Date().toLocaleDateString("en-PK")}`, UR.date)}</div>
-          <div>${urUnder(`Time: ${new Date().toLocaleTimeString("en-PK")}`, UR.time)}</div>
+          <div>Date: ${new Date().toLocaleDateString("en-PK")}</div>
+          <div>Time: ${new Date().toLocaleTimeString("en-PK")}</div>
         </div>
       </div>
       <div style="display:flex;gap:20px;">
-        <div class="field" style="flex:1;"><label>${urUnder("Invoice Reference", UR.invoiceReference)}</label><p>${invoice!.invoice_number}</p></div>
-        <div class="field" style="flex:1;"><label>${urUnder("Customer", UR.customer)}</label><p>${invoice!.parties?.name ?? "—"}</p></div>
+        <div class="field" style="flex:1;"><label>Invoice Reference</label><p>${invoice!.invoice_number}</p></div>
+        <div class="field" style="flex:1;"><label>Customer</label><p>${invoice!.parties?.name ?? "—"}</p></div>
       </div>
 
       <table class="items-table">
         <thead>
           <tr>
-            <th>${urUnder("Product", UR.product)}</th>
-            <th style="text-align:center;">${urUnder("Qty", UR.qty)}</th>
-            <th style="text-align:right;">${urUnder("Unit Price", UR.unitPrice)}</th>
-            <th style="text-align:right;">${urUnder("Line Total", UR.lineTotal)}</th>
+            <th>Product</th>
+            <th style="text-align:center;">Qty</th>
+            <th style="text-align:right;">Unit Price</th>
+            <th style="text-align:right;">Line Total</th>
           </tr>
         </thead>
         <tbody>
@@ -115,21 +113,21 @@ ${URDU_HTML_STYLES}
               <td style="text-align:right;">PKR ${fmt(item.line_total_pkr)}</td>
             </tr>
           `).join("")}
-          ${(invoice!.items ?? []).length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#94a3b8;">${urUnder("No line items", UR.noLineItems)}</td></tr>` : ""}
+          ${(invoice!.items ?? []).length === 0 ? `<tr><td colspan="4" style="text-align:center;color:#94a3b8;">No line items</td></tr>` : ""}
         </tbody>
       </table>
 
       <table class="summary-table">
-        <tr><td>${urUnder("Taxable Value", UR.taxableValue)}</td><td style="text-align:right;font-family:monospace;">PKR ${fmt(invoice!.taxable_value_pkr)}</td></tr>
-        <tr><td>${urUnder(`Sales Tax (${salesTaxRate}%)`, UR.salesTax)}</td><td style="text-align:right;font-family:monospace;">PKR ${fmt(invoice!.sales_tax_amount_pkr)}</td></tr>
-        ${furtherTaxAmt > 0 ? `<tr><td>${urUnder(`Further Tax (${furtherTaxRate}%)`, UR.furtherTax)}</td><td style="text-align:right;font-family:monospace;color:#d97706;">PKR ${fmt(furtherTaxAmt)}</td></tr>` : ""}
-        <tr class="total-row"><td>${urUnder("Total Invoice Value", UR.totalInvoiceValue)}</td><td style="text-align:right;font-family:monospace;color:#dc2626;">PKR ${fmt(invoice!.total_invoice_value_pkr)}</td></tr>
+        <tr><td>Taxable Value</td><td style="text-align:right;font-family:monospace;">PKR ${fmt(invoice!.taxable_value_pkr)}</td></tr>
+        <tr><td>Sales Tax (${salesTaxRate}%)</td><td style="text-align:right;font-family:monospace;">PKR ${fmt(invoice!.sales_tax_amount_pkr)}</td></tr>
+        ${furtherTaxAmt > 0 ? `<tr><td>Further Tax (${furtherTaxRate}%)</td><td style="text-align:right;font-family:monospace;color:#d97706;">PKR ${fmt(furtherTaxAmt)}</td></tr>` : ""}
+        <tr class="total-row"><td>Total Invoice Value</td><td style="text-align:right;font-family:monospace;color:#dc2626;">PKR ${fmt(invoice!.total_invoice_value_pkr)}</td></tr>
       </table>
 
       <div class="signatures">
-        <div class="sig-box"><div class="line">${urUnder("Store Keeper", UR.storeKeeper)}</div></div>
-        <div class="sig-box"><div class="line">${urUnder("Driver / Transporter", UR.driverTransporter)}</div></div>
-        <div class="sig-box"><div class="line">${urUnder("Security Guard", UR.securityGuard)}</div></div>
+        <div class="sig-box"><div class="line">Store Keeper</div></div>
+        <div class="sig-box"><div class="line">Driver / Transporter</div></div>
+        <div class="sig-box"><div class="line">Security Guard</div></div>
       </div>
       <div style="margin-top:14px;font-size:11px;text-align:center;color:#555;">${COMPANY_LEGAL_NAME}</div>
     </div>

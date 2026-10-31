@@ -36,16 +36,11 @@ interface Props {
 /**
  * Edit dispatch parameters.
  *
- * Before approval (status 'pending_approval') everything is editable: line
- * items with live-recalculated totals (taxable → sales/further tax → grand
- * total), dispatch date, transport details, and operator notes. Saving item
- * changes keeps the sales invoice's items and totals in sync — no stock moves
- * because nothing was deducted yet.
- *
- * After approval the financial fields are locked (the ledger entry and stock
- * deduction were already posted); transport details, operator notes, date, and
- * the approved → dispatched transition stay editable. Use Delete to revert an
- * approved dispatch — that path reverses stock and the ledger entry first.
+ * Financial fields (line items, totals) are always locked after a dispatch is
+ * created — stock was deducted and the ledger posted at creation time. Only
+ * transport details, dispatch date, operator notes, and the approved →
+ * dispatched status transition stay editable. Use Delete to revert a dispatch
+ * — that path reverses stock and the ledger entry first.
  */
 export default function EditDispatchModal({ record, open, onClose, onSaved }: Props) {
   // The parent mounts this modal only while a record is selected, so state is
@@ -69,10 +64,10 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
   if (!record || !open) return null;
 
   const resolvedStatus: DispatchStatus = record.status ?? "dispatched";
-  const itemsLocked = resolvedStatus !== "pending_approval";
-  const pending = resolvedStatus === "pending_approval";
+  // Items are always locked — stock is deducted and the ledger posted at dispatch creation.
+  const itemsLocked = true;
 
-  // ── Live totals (pending rows only) ──────────────────────────────────────
+  // ── Saved totals (read-only; itemsLocked is always true) ─────────────────
   const originalGross = (record.line_items ?? []).reduce(
     (sum, i) => sum + i.quantity * i.unit_price_pkr,
     0,
@@ -96,20 +91,8 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
       : 0;
   const total = round2(taxable + salesTax + furtherTax);
 
-  const itemsChanged =
-    pending &&
-    items.length !== (record.line_items ?? []).length
-      ? true
-      : pending &&
-        items.some((it, idx) => {
-          const orig = (record.line_items ?? [])[idx];
-          return (
-            !orig ||
-            orig.quantity !== it.quantity ||
-            orig.unit_price_pkr !== it.unit_price_pkr ||
-            orig.product_id !== it.product_id
-          );
-        });
+  // Items are always locked; changes are never applied.
+  const itemsChanged = false;
 
   function updateItem(index: number, patch: Partial<DispatchLineItem>) {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
@@ -121,20 +104,7 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
 
   async function handleSave() {
     if (!record || saving) return;
-    if (pending) {
-      if (items.length === 0) {
-        toast.error("A dispatch needs at least one line item.");
-        return;
-      }
-      if (items.some((it) => !(Number(it.quantity) > 0))) {
-        toast.error("Every line needs a quantity greater than zero.");
-        return;
-      }
-      if (items.some((it) => Number(it.unit_price_pkr) < 0)) {
-        toast.error("Unit prices cannot be negative.");
-        return;
-      }
-    }
+
 
     setSaving(true);
     try {
@@ -217,11 +187,7 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
             {/* Status */}
             <div className="flex items-center justify-between gap-3">
               <span className="text-body text-secondary">Status</span>
-              {resolvedStatus === "pending_approval" ? (
-                <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-full bg-status-amber/15 text-status-amber">
-                  Pending Approval — approve from Dispatch History to deduct stock and post the ledger
-                </span>
-              ) : resolvedStatus === "dispatched" ? (
+              {resolvedStatus === "dispatched" ? (
                 <span className="inline-block text-[10px] font-medium px-2 py-0.5 rounded-full bg-status-optimal/15 text-status-optimal">
                   Dispatched
                 </span>
@@ -243,7 +209,7 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
                 <span className="text-caption text-muted font-medium uppercase tracking-wider">Items Dispatched</span>
                 {itemsLocked && (
                   <span className="text-caption text-muted">
-                    Locked after approval — delete the dispatch to re-issue it
+                    Locked — delete the dispatch to re-issue it
                   </span>
                 )}
               </div>
@@ -262,7 +228,7 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
                     {items.length === 0 && (
                       <tr>
                         <td colSpan={5} className="px-3 py-4 text-center text-caption text-muted">
-                          No line items — add items by editing the invoice before approval.
+                          No line items recorded for this dispatch.
                         </td>
                       </tr>
                     )}
@@ -321,20 +287,20 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
                 <div className="flex justify-between text-body">
                   <span className="text-secondary">Taxable Value</span>
                   <span className="font-mono text-num-table text-foreground">
-                    {formatPKR(pending ? taxable : record.taxable_value_pkr)}
+                    {formatPKR(record.taxable_value_pkr)}
                   </span>
                 </div>
                 <div className="flex justify-between text-body">
                   <span className="text-secondary">Sales Tax ({record.sales_tax_rate ?? 0}%)</span>
                   <span className="font-mono text-num-table text-foreground">
-                    {formatPKR(pending ? salesTax : record.sales_tax_amount_pkr)}
+                    {formatPKR(record.sales_tax_amount_pkr)}
                   </span>
                 </div>
                 {(record.further_tax_rate ?? 0) > 0 && (
                   <div className="flex justify-between text-body">
                     <span className="text-secondary">Further Tax ({record.further_tax_rate}%)</span>
                     <span className="font-mono text-num-table text-status-amber">
-                      {formatPKR(pending ? furtherTax : record.further_tax_amount_pkr)}
+                      {formatPKR(record.further_tax_amount_pkr)}
                     </span>
                   </div>
                 )}

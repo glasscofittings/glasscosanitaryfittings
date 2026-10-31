@@ -19,7 +19,6 @@ import {
   COMPANY_LEGAL_NAME,
 } from "@/lib/branding";
 import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
-import { URDU_HTML_STYLES, UR, urSpan, urUnder } from "@/lib/pdf-urdu";
 import {
   REFERENCE_ADDRESS,
   REFERENCE_EMAIL,
@@ -146,10 +145,10 @@ export function generateQuotationHTML(quotation: Quotation): string {
   const titleSize = Math.min(COMPANY_HEADER_FONT_SIZE_PX, 30);
   const grossItems = q.items.length;
 
-  const th = (en: string, ur: string, cls = "") =>
-    `<th${cls ? ` class="${cls}"` : ""}>${urUnder(en, ur)}</th>`;
-  const metaRow = (label: string, labelUr: string, value: string) =>
-    `<div class="kv"><span class="k">${label}${urSpan(labelUr, "margin-left:5px;")}</span><span class="v">${value}</span></div>`;
+  const th = (en: string, cls = "") =>
+    `<th${cls ? ` class="${cls}"` : ""}>${en}</th>`;
+  const metaRow = (label: string, value: string) =>
+    `<div class="kv"><span class="k">${label}</span><span class="v">${value}</span></div>`;
 
   const itemRows =
     grossItems > 0
@@ -171,7 +170,7 @@ export function generateQuotationHTML(quotation: Quotation): string {
       </tr>`,
           )
           .join("")
-      : `<tr><td class="empty" colspan="8">${urUnder("No line items recorded for this quotation", UR.noLineItemsRecorded)}</td></tr>`;
+      : `<tr><td class="empty" colspan="8">No line items recorded for this quotation</td></tr>`;
 
   const totalQty = q.items.reduce((sum, item) => sum + item.quantity, 0);
   const grossLinesTotal = q.items.reduce(
@@ -181,7 +180,7 @@ export function generateQuotationHTML(quotation: Quotation): string {
   const totalRow =
     grossItems > 0
       ? `<tr class="total-row">
-        <td colspan="4">${urUnder("Total", UR.totalRow)}</td>
+        <td colspan="4">Total</td>
         <td class="ctr">${qtyFmt(totalQty)}</td>
         <td></td>
         <td></td>
@@ -191,17 +190,17 @@ export function generateQuotationHTML(quotation: Quotation): string {
 
   const summaryRows = [
     ...(q.discount_pkr > 0
-      ? [`<tr><td>${urUnder("Discount / Extra Discount (XD)", UR.discountXd)}</td><td class="amt">PKR ${fmt(q.discount_pkr)}</td></tr>`]
-      : [`<tr><td>${urUnder("Discount / Extra Discount (XD)", UR.discountXd)}</td><td class="amt">PKR 0.00</td></tr>`]),
-    `<tr><td>${urUnder("Sales Tax (GST)", UR.salesTax)}</td><td class="amt">PKR ${fmt(q.tax_amount_pkr)}</td></tr>`,
+      ? [`<tr><td>Discount / Extra Discount (XD)</td><td class="amt">PKR ${fmt(q.discount_pkr)}</td></tr>`]
+      : [`<tr><td>Discount / Extra Discount (XD)</td><td class="amt">PKR 0.00</td></tr>`]),
+    `<tr><td>Sales Tax (GST)</td><td class="amt">PKR ${fmt(q.tax_amount_pkr)}</td></tr>`,
     ...(q.additional_charges_pkr > 0
       ? [
-          `<tr><td>${urUnder("Additional Charges", UR.subTotal)}</td><td class="amt">PKR ${fmt(q.additional_charges_pkr)}</td></tr>`,
+          `<tr><td>Additional Charges</td><td class="amt">PKR ${fmt(q.additional_charges_pkr)}</td></tr>`,
         ]
       : []),
   ].join("");
 
-  const grandTotalRow = `<tr class="grand"><td><span class="grand-en">Total Amount</span>${urSpan("کل رقم (کوٹیشن)", "margin-left:8px;font-size:9.5pt;")}</td><td class="amt">PKR ${fmt(q.grand_total_pkr)}</td></tr>`;
+  const grandTotalRow = `<tr class="grand"><td><span class="grand-en">Total Amount</span></td><td class="amt">PKR ${fmt(q.grand_total_pkr)}</td></tr>`;
 
   const addressRow = q.customer_address
     ? `<div class="cust-addr">${esc(q.customer_address)}</div>`
@@ -216,18 +215,15 @@ export function generateQuotationHTML(quotation: Quotation): string {
     <html lang="en"><head><meta charset="utf-8">
     <title>${esc(q.quotation_number)}</title>
     <style>
-      ${URDU_HTML_STYLES}
       ${SANS_FONT_FACES_CSS}
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;background:#eef1f5;}
       body{font-family:${SANS_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:400;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
       .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #1D5298;margin:8px 0;}
       .subtitle{display:block;background:#d8e2f4;color:#09090b;font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
-      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:14px;color:#09090b;}
       .meta{display:flex;justify-content:space-between;gap:10mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
       .to{font-size:14px;font-weight:800;color:#09090b;}
@@ -241,7 +237,6 @@ export function generateQuotationHTML(quotation: Quotation): string {
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:2px solid #3c3f42ff;padding:5px 6px;vertical-align:middle;}
       table.items thead th{background:#d8e2f4;color:#09090b;font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:800;font-size:14px;color:#09090b;}
       table.items tbody td{font-size:10.5px;color:#09090b;}
       table.items .ctr{text-align:center;}
       table.items .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
@@ -273,7 +268,6 @@ export function generateQuotationHTML(quotation: Quotation): string {
       .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
       .signatures{display:flex;justify-content:space-between;gap:30px;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
       .sig{width:46%;text-align:center;font-size:10.5px;font-weight:600;color:#09090b;}
-      .sig .ur{text-align:center;font-weight:600;}
       /* Footer */
       .footer{margin-top:12px;text-align:center;page-break-inside:avoid;}
       .footer .legal{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
@@ -294,23 +288,23 @@ export function generateQuotationHTML(quotation: Quotation): string {
       <div class="head">
         <div class="brand-name">${esc(docTitle)}</div>
         <div class="rule"></div>
-        <div class="subtitle">Q U O T A T I O N&nbsp;&nbsp;/&nbsp;${urSpan(UR.quotation, "margin-left:4px;font-size:11.5px;letter-spacing:normal;")}</div>
+        <div class="subtitle">Q U O T A T I O N</div>
       </div>
 
       <div class="meta">
         <div class="meta-l">
-          <div class="to"><span>TO:</span>${urSpan("وصول کنندہ", "margin-left:6px;")}</div>
+          <div class="to"><span>TO:</span></div>
           <div class="cust-name">${esc(q.customer_name) || "&mdash;"}</div>
           ${addressRow}
           ${contactRow}
         </div>
         <div class="meta-r">
-          ${metaRow("Mob", UR.phone, esc(contactPhone))}
-          ${metaRow("Tel", UR.tel, esc(contactTel))}
-          ${metaRow("QTN No", UR.quotationNo, esc(q.quotation_number))}
-          ${metaRow("Date", UR.date, esc(formatDate(q.quotation_date)))}
-          ${q.valid_until ? metaRow("Valid Until", UR.validUntil, esc(formatDate(q.valid_until))) : ""}
-          ${metaRow("Page", UR.pageOf, "1 of 1")}
+          ${metaRow("Mob", esc(contactPhone))}
+          ${metaRow("Tel", esc(contactTel))}
+          ${metaRow("QTN No", esc(q.quotation_number))}
+          ${metaRow("Date", esc(formatDate(q.quotation_date)))}
+          ${q.valid_until ? metaRow("Valid Until", esc(formatDate(q.valid_until))) : ""}
+          ${metaRow("Page", "1 of 1")}
         </div>
       </div>
 
@@ -327,14 +321,14 @@ export function generateQuotationHTML(quotation: Quotation): string {
         </colgroup>
         <thead>
           <tr>
-            ${th("SR. #", "نمبر", "ctr")}
-            ${th("PRODUCT NAME", "پروڈکٹ کا نام")}
-            ${th("CODE", "کوڈ", "ctr")}
-            ${th("UNIT", "یونٹ", "ctr")}
-            ${th("QTY", "مقدار", "ctr")}
-            ${th("RATE", "قیمت", "num")}
-            ${th("DISC. %", "ڈسکاؤنٹ %", "num")}
-            ${th("TOTAL PRICE", "کل قیمت", "num")}
+            ${th("SR. #", "ctr")}
+            ${th("PRODUCT NAME")}
+            ${th("CODE", "ctr")}
+            ${th("UNIT", "ctr")}
+            ${th("QTY", "ctr")}
+            ${th("RATE", "num")}
+            ${th("DISC. %", "num")}
+            ${th("TOTAL PRICE", "num")}
           </tr>
         </thead>
         <tbody>${itemRows}${totalRow}</tbody>
@@ -361,8 +355,8 @@ export function generateQuotationHTML(quotation: Quotation): string {
 
       <div class="page-foot">
         <div class="signatures">
-          <div class="sig">${urUnder("Received By (Customer)", "وصول کنندہ (گاہک)")}</div>
-          <div class="sig">${urUnder("Authorised Signatory", "اختیار یافتہ دستخط کنندہ")}</div>
+          <div class="sig">Received By (Customer)</div>
+          <div class="sig">Authorised Signatory</div>
         </div>
 
         <div class="footer">

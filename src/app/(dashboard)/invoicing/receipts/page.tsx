@@ -477,7 +477,7 @@ export default function CustomerReceiptsPage() {
                       <div className="flex items-center justify-center gap-1">
                         <button
                           onClick={() => handlePrint(v)}
-                          title="Print voucher (English + Urdu)"
+                          title="Print voucher"
                           disabled={printingId !== null}
                           className="h-7 w-7 rounded-md bg-bg-muted border border-border-default text-secondary hover:text-foreground hover:border-crimson-primary/40 transition-colors flex items-center justify-center disabled:opacity-50"
                         >

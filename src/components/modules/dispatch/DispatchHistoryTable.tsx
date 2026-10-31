@@ -38,17 +38,12 @@ function StatusBadge({ status }: { status?: DispatchStatus }) {
 
 interface Props {
   records: DispatchRecord[];
-  /** Id of the row currently calling approve_dispatch (drives its spinner). */
-  approvingId: string | null;
-  onApprove: (record: DispatchRecord) => void;
   onEdit: (record: DispatchRecord) => void;
   onDelete: (record: DispatchRecord) => void;
 }
 
 export default function DispatchHistoryTable({
   records,
-  approvingId,
-  onApprove,
   onEdit,
   onDelete,
 }: Props) {
@@ -86,7 +81,6 @@ export default function DispatchHistoryTable({
                 ? items.map((i: DispatchLineItem) => `${i.product_name} (${i.quantity})`).join(", ")
                 : "—";
               const status: DispatchStatus = rec.status ?? "dispatched";
-              const busy = approvingId !== null;
               return (
                 <tr key={rec.id} className="border-b border-border-subtle hover:bg-bg-subtle transition-colors">
                   <td className="px-4 py-3">

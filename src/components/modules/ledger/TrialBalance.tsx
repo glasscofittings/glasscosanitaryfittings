@@ -1,17 +1,13 @@
 import { useState, useMemo } from "react";
 import { type TrialBalanceRow } from "@/lib/supabase/ledger";
 import { formatPKR } from "@/lib/utils/formatters";
-import { accountUrdu, type UrduNameMap } from "@/lib/report-i18n";
-import { UrduUnder, BiLabel } from "@/components/shared/UrduText";
 
 interface Props {
   rows: TrialBalanceRow[];
   onViewLedger?: (row: TrialBalanceRow) => void;
-  /** Pre-translated English → Urdu account names; empty until the page finishes one batch call. */
-  urduMap?: UrduNameMap;
 }
 
-export default function TrialBalance({ rows, onViewLedger, urduMap = {} }: Props) {
+export default function TrialBalance({ rows, onViewLedger }: Props) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -74,7 +70,6 @@ export default function TrialBalance({ rows, onViewLedger, urduMap = {} }: Props
                   <td className="py-2">
                     <span className="text-caption text-secondary font-mono">{r.account_code}</span>
                     <span className="text-body text-foreground ml-2">{r.account_name}</span>
-                    <UrduUnder ur={accountUrdu(r.account_name, urduMap, r.name_urdu)} />
                   </td>
                   <td className="py-2 text-right font-mono text-num-table text-foreground">
                     {r.total_debit > 0 ? formatPKR(r.total_debit) : "—"}
@@ -98,7 +93,7 @@ export default function TrialBalance({ rows, onViewLedger, urduMap = {} }: Props
           </tbody>
           <tfoot>
             <tr className="border-t border-border-default font-semibold">
-              <td className="py-2 text-body text-foreground"><BiLabel en="Total" /></td>
+              <td className="py-2 text-body text-foreground">Total</td>
               <td className="py-2 text-right font-mono text-num-kpi text-foreground">{formatPKR(totalDebit)}</td>
               <td className="py-2 text-right font-mono text-num-kpi text-foreground">{formatPKR(totalCredit)}</td>
               {onViewLedger && <td />}

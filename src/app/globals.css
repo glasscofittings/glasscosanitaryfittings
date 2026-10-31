@@ -537,25 +537,6 @@ td, th {
 /* Table row hover */
 tr:hover .hover-row-bg { background-color: var(--bg-subtle); }
 
-/* Urdu (RTL) secondary lines under English labels */
-@font-face {
-  font-family: "Amiri";
-  src: url("/fonts/Amiri-Regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-.ur {
-  display: block;
-  width: fit-content;
-  direction: rtl;
-  unicode-bidi: isolate;
-  text-align: right;
-  line-height: 1.7;
-  font-family: "Amiri", "Noto Nastaliq Urdu", serif;
-}
-
 /* ── Print Utilities & Payslip Page Setup ─────────────────── */
 @page {
   size: A4 portrait;

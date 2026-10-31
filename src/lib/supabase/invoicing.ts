@@ -1,5 +1,4 @@
 import { printPdfDocument } from "@/lib/tauri-bridge";
-import { UR, URDU_HTML_STYLES, urSpan, urUnder } from "@/lib/pdf-urdu";
 import {
   DEFAULT_COMPANY,
   getExportDocumentTitle,
@@ -533,12 +532,16 @@ export async function createInvoice(invoice: {
             "Invoice lines could not be saved, so nothing was recorded. Please retry.",
         };
       }
-      // Stock is deliberately NOT moved here: under the dispatch approval
-      // workflow inventory only changes when approve_dispatch runs (the
-      // "Approve" action in Dispatch History). Invoices that predate the
-      // workflow carry stock_deducted=true (migration 20261107010000), so
-      // their edit/delete paths still reverse stock correctly.
-      return { invoice: { ...created, items: saved } };
+      // Deduct stock immediately — the dispatch approval workflow is removed;
+      // inventory moves at invoice creation, matching pre-approval behaviour.
+      const stockErrors = await applyStockMovement(items, "deduct");
+      return {
+        invoice: { ...created, items: saved },
+        stockWarning:
+          stockErrors.length > 0
+            ? `Invoice saved, but inventory could not be reduced for: ${stockErrors.join("; ")}`
+            : undefined,
+      };
     }
     return { invoice: created };
   } catch (err) {
@@ -888,7 +891,7 @@ export async function deleteInvoice(invoice: {
     return {
       success: true,
       ledgerRemoved,
-      stockRestored: stockSettled && items.length > 0 && stockErrors.length === 0,
+      stockRestored: items.length > 0 && stockErrors.length === 0,
     };
   } catch (err) {
     console.error(
@@ -1511,8 +1514,6 @@ export async function postInvoiceWithLedger(
 }
 
 export interface InvoiceHtmlOptions {
-  /** Urdu translations aligned with `invoice.items` order; missing or identity entries render English only. */
-  urduItemNames?: Array<string | undefined>;
   /** Brand / Category label aligned with `invoice.items` order (see `resolveInvoiceItemBrands`). */
   itemBrands?: Array<string | undefined>;
   /** Sales person shown in the right-hand meta card. */
@@ -1692,16 +1693,15 @@ export function generateInvoiceHTML(
     Boolean(v && String(v).trim()),
   );
 
-  const th = (en: string, ur: string, cls = "") =>
-    `<th${cls ? ` class="${cls}"` : ""}>${urUnder(en, ur)}</th>`;
-  const metaRow = (label: string, labelUr: string, value: string) =>
-    `<div class="kv"><span class="k">${label}${urSpan(labelUr, "margin-left:5px;")}</span><span class="v">${value}</span></div>`;
+  const th = (en: string, cls = "") =>
+    `<th${cls ? ` class="${cls}"` : ""}>${en}</th>`;
+  const metaRow = (label: string, value: string) =>
+    `<div class="kv"><span class="k">${label}</span><span class="v">${value}</span></div>`;
 
   const itemRows =
     items.length > 0
       ? items
           .map((item, index) => {
-            const urduName = options.urduItemNames?.[index];
             // Each row shows its OWN line discount (saved per item on
             // sales_invoice_items) as a percent of the gross line value.
             const lineGross = r2(
@@ -1716,7 +1716,6 @@ export function generateInvoiceHTML(
         <td class="ctr mono">${index + 1}</td>
         <td>
           <div class="prod" dir="auto">${esc(item.product_name)}</div>
-          ${urduName ? `<div class="ur" lang="ur" dir="rtl">${esc(urduName)}</div>` : ""}
         </td>
         <td class="ctr">${esc(item.unit_of_measure || "PCS")}</td>
         <td class="ctr mono">${qtyFmt(r2(Number(item.quantity ?? 0)))}</td>
@@ -1726,12 +1725,12 @@ export function generateInvoiceHTML(
       </tr>`;
           })
           .join("")
-      : `<tr><td class="empty" colspan="7">${urUnder("No line items recorded for this invoice", UR.noLineItemsRecorded)}</td></tr>`;
+      : `<tr><td class="empty" colspan="7">No line items recorded for this invoice</td></tr>`;
 
   const totalRow =
     items.length > 0
       ? `<tr class="total-row">
-        <td colspan="3">${urUnder("Total", UR.totalRow)}</td>
+        <td colspan="3">Total</td>
         <td class="ctr">${qtyFmt(totalQty)}</td>
         <td></td>
         <td></td>
@@ -1740,41 +1739,38 @@ export function generateInvoiceHTML(
       : "";
 
   const summaryRows = [
-    `<tr><td>${urUnder("Discount / Extra Discount (XD)", UR.discountXd)}</td><td class="amt">PKR ${fmt(totalDiscount)}</td></tr>`,
+    `<tr><td>Discount / Extra Discount (XD)</td><td class="amt">PKR ${fmt(totalDiscount)}</td></tr>`,
     // Only render the Sales Tax (GST) row when there is an actual GST amount.
     // At the 0% default the row is omitted and Total Amount equals the taxable
     // value — no phantom 18% GST is ever printed.
     ...(salesTaxAmt > 0
       ? [
-          `<tr><td>${urUnder("Sales Tax (GST)", UR.salesTax)}</td><td class="amt">PKR ${fmt(salesTaxAmt)}</td></tr>`,
+          `<tr><td>Sales Tax (GST)</td><td class="amt">PKR ${fmt(salesTaxAmt)}</td></tr>`,
         ]
       : []),
     ...(furtherTaxAmt > 0
       ? [
-          `<tr><td>${urUnder(`Further Tax (${furtherTaxRate}%)`, UR.furtherTax)}</td><td class="amt">PKR ${fmt(furtherTaxAmt)}</td></tr>`,
+          `<tr><td>Further Tax (${furtherTaxRate}%)</td><td class="amt">PKR ${fmt(furtherTaxAmt)}</td></tr>`,
         ]
       : []),
   ].join("");
 
-  const grandTotalRow = `<tr class="grand"><td><span class="grand-en">Total Amount</span>${urSpan(UR.totalAmount, "margin-left:8px;font-size:9.5pt;")}</td><td class="amt">PKR ${fmt(invoice.total_invoice_value_pkr)}</td></tr>`;
+  const grandTotalRow = `<tr class="grand"><td><span class="grand-en">Total Amount</span></td><td class="amt">PKR ${fmt(invoice.total_invoice_value_pkr)}</td></tr>`;
 
   return `
     <!DOCTYPE html>
     <html lang="en"><head><meta charset="utf-8">
     <title>${esc(invoice.invoice_number)}</title>
     <style>
-      ${URDU_HTML_STYLES}
       ${SANS_FONT_FACES_CSS}
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;background:#eef1f5;}
       body{font-family:${SANS_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:600;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
       .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #1b55a5ff;margin:8px 0;}
       .subtitle{display:block;background:#d8e2f4;color:#09090b;font-size:13.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;border-radius:3px;}
-      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;color:#09090b;}
       .meta{display:flex;justify-content:space-between;gap:10mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
       .to{font-size:14px;font-weight:800;color:#09090b;}
@@ -1788,7 +1784,6 @@ export function generateInvoiceHTML(
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:2px solid #3c3f42ff;padding:5px 6px;vertical-align:middle;}
       table.items thead th{background:#d8e2f4; color:#09090b;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:700;font-size:9px;color:#09090b;}
       table.items tbody td{font-size:14px;color:#09090b;}
       table.items .ctr{text-align:center;}
       table.items .num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
@@ -1815,7 +1810,6 @@ export function generateInvoiceHTML(
       .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
       .signatures{display:flex;justify-content:space-between;gap:30px;padding-top:16px;border-top:1px solid #0f172a;page-break-inside:avoid;}
       .sig{width:46%;text-align:center;font-size:10.5px;font-weight:600;color:#09090b;}
-      .sig .ur{text-align:center;font-weight:600;}
       /*------------------------------------------------------------- Footer -------------------------------------------------*/
       .footer{margin-top:12px;text-align:center;page-break-inside:avoid;}
       .footer .legal{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
@@ -1836,22 +1830,22 @@ export function generateInvoiceHTML(
       <div class="head">
         <div class="brand-name">${esc(docTitle)}</div>
         <div class="rule"></div>
-        <div class="subtitle">S A L E&nbsp;&nbsp;I N V O I C E&nbsp;&nbsp;/&nbsp;${urSpan(UR.saleInvoice, "margin-left:4px;font-size:11px;letter-spacing:normal;")}</div>
+        <div class="subtitle">S A L E&nbsp;&nbsp;I N V O I C E</div>
       </div>
 
       <div class="meta">
         <div class="meta-l">
-          <div class="to"><span>TO:</span>${urSpan(UR.billTo, "margin-left:6px;")}</div>
+          <div class="to"><span>TO:</span></div>
           <div class="cust-name">${esc(party?.name) || "&mdash;"}</div>
           ${party?.address?.trim() ? `<div class="cust-addr">${esc(party.address.trim())}</div>` : ""}
           ${partyContact.length ? `<div class="cust-contact">${partyContact.map((v) => esc(v)).join(" &bull; ")}</div>` : ""}
         </div>
         <div class="meta-r">
-          ${metaRow("Mob", UR.phone, esc(contactPhone))}
-          ${metaRow("Tel", UR.tel, esc(contactTel))}
-          ${metaRow("Bill No", "نمبر بل", esc(invoice.invoice_number))}
-          ${metaRow("Bill Date", UR.date, esc(billDateTime))}
-          ${metaRow("Page", UR.pageOf, "1 of 1")}
+          ${metaRow("Mob", esc(contactPhone))}
+          ${metaRow("Tel", esc(contactTel))}
+          ${metaRow("Bill No", esc(invoice.invoice_number))}
+          ${metaRow("Bill Date", esc(billDateTime))}
+          ${metaRow("Page", "1 of 1")}
         </div>
       </div>
 
@@ -1861,13 +1855,13 @@ export function generateInvoiceHTML(
         </colgroup>
         <thead>
           <tr>
-            ${th("Sr.#", UR.srNo, "ctr")}
-            ${th("Product Name", UR.productDetail)}
-            ${th("Unit", UR.unit, "ctr")}
-            ${th("Qty", UR.qty, "ctr")}
-            ${th("Price", UR.price, "num")}
-            ${th("Disc%", UR.discPercent, "num")}
-            ${th("Total Price", UR.totalPrice, "num")}
+            ${th("Sr.#", "ctr")}
+            ${th("Product Name")}
+            ${th("Unit", "ctr")}
+            ${th("Qty", "ctr")}
+            ${th("Price", "num")}
+            ${th("Disc%", "num")}
+            ${th("Total Price", "num")}
           </tr>
         </thead>
         <tbody>${itemRows}${totalRow}</tbody>
@@ -1886,8 +1880,8 @@ export function generateInvoiceHTML(
 
       <div class="page-foot">
         <div class="signatures">
-          <div class="sig">${urUnder("Received By (Customer)", UR.receivedByCustomer)}</div>
-          <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
+          <div class="sig">Received By (Customer)</div>
+          <div class="sig">Authorised Signatory</div>
         </div>
 
         <div class="footer">

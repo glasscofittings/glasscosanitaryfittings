@@ -1,6 +1,5 @@
 import { printPdfDocument } from "@/lib/tauri-bridge";
 import { fetchPartyPaymentVouchers, type PaymentVoucher } from "@/lib/supabase/payment-vouchers";
-import { UR, URDU_HTML_STYLES, urUnder } from "@/lib/pdf-urdu";
 import { getCompanyLogoHtml, getExportCompanyName } from "@/lib/company-settings";
 import { COMPANY_HEADER, COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME } from "@/lib/branding";
 import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
@@ -745,17 +744,12 @@ export function generatePartyLedgerHTML(
   });
   const finalBalance = entries.length ? entries[entries.length - 1].balance : openingBalance;
   const balanceLabel = balanceAmountLabel(party.party_type, finalBalance);
-  const closingUr = balanceLabel === "Amount Payable" ? UR.amountPayable : UR.amountReceivable;
   const footerNoteEn =
     party.party_type === "SUPPLIER"
       ? "Purchase invoices are credits - payments are debits - balance is the amount payable"
       : party.party_type === "BOTH"
       ? "Buyer side: invoices debit / payments credit - supplier side: invoices credit / payments debit"
       : "Sales invoices are debits - receipts are credits - balance is the amount receivable";
-  const footerNoteUr =
-    party.party_type === "SUPPLIER" ? UR.ledgerFooterNoteSupplier
-    : party.party_type === "BOTH" ? UR.ledgerFooterNoteBoth
-    : UR.ledgerFooterNoteCustomer;
 
   const bodyRows = rows.length > 0
     ? rows.join("")
@@ -765,10 +759,6 @@ export function generatePartyLedgerHTML(
     party.party_type === "SUPPLIER" ? "Supplier Ledger"
     : party.party_type === "BOTH" ? "Buyer / Supplier Ledger"
     : "Customer Ledger";
-  const reportTitleUr =
-    party.party_type === "SUPPLIER" ? UR.supplierLedger
-    : party.party_type === "BOTH" ? UR.buyerSupplierLedger
-    : UR.customerLedger;
 
   const stamp = now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }).replace(/ /g, "-")
     + "&nbsp;&nbsp;&nbsp;" + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -778,7 +768,6 @@ export function generatePartyLedgerHTML(
     <html><head><meta charset="utf-8">
     <title>${reportTitle} - ${escapeHtml(party.name)}</title>
     <style>
-      ${URDU_HTML_STYLES}
       @page{size:A4;margin:14mm 12mm 18mm 12mm;}
       ${SANS_FONT_FACES_CSS}
       body{font-family:${SANS_FONT_FAMILY_CSS};margin:0;padding:0;color:#111;font-size:12px;font-weight:400;}
@@ -820,40 +809,40 @@ export function generatePartyLedgerHTML(
           ${getCompanyLogoHtml({ width: 48, height: 48 })}
           <p class="company">${COMPANY_HEADER}</p>
         </div>
-        <p class="report">${urUnder(reportTitle, reportTitleUr)}</p>
-        <p class="period">${urUnder(`From ${formatLedgerDate(from)} To ${formatLedgerDate(to)}`, `${UR.from} ${formatLedgerDate(from)} ${UR.to} ${formatLedgerDate(to)}`)}</p>
+        <p class="report">${reportTitle}</p>
+        <p class="period">From ${formatLedgerDate(from)} To ${formatLedgerDate(to)}</p>
       </div>
       <div class="opening">
-        <div class="label">${urUnder("Opening Balance", UR.openingBalance)}</div>
+        <div class="label">Opening Balance</div>
         <div class="value">${formatLedgerAmount(Math.abs(openingBalance))} ${balanceSide(openingBalance)}</div>
-        <div class="label" style="margin-top:8px;">${urUnder(balanceLabel, closingUr)}</div>
+        <div class="label" style="margin-top:8px;">${balanceLabel}</div>
         <div class="value">${formatLedgerAmount(Math.abs(finalBalance))} ${balanceSide(finalBalance)}</div>
       </div>
     </div>
     <div class="customer">
       <div class="name">${escapeHtml(party.name)}</div>
       <div class="meta">
-        <span><strong>${urUnder("Type:", UR.type)}</strong> ${LEDGER_PARTY_TYPE_LABEL[party.party_type]}</span>
-        <span><strong>${urUnder("Phone:", UR.phone)}</strong> ${escapeHtml(party.phone || "-")}</span>
-        <span><strong>${urUnder("Email:", UR.email)}</strong> ${escapeHtml(party.email || "-")}</span>
-        ${party.address ? `<span><strong>${urUnder("Address:", UR.address)}</strong> ${escapeHtml(party.address)}</span>` : ""}
+        <span><strong>Type:</strong> ${LEDGER_PARTY_TYPE_LABEL[party.party_type]}</span>
+        <span><strong>Phone:</strong> ${escapeHtml(party.phone || "-")}</span>
+        <span><strong>Email:</strong> ${escapeHtml(party.email || "-")}</span>
+        ${party.address ? `<span><strong>Address:</strong> ${escapeHtml(party.address)}</span>` : ""}
       </div>
     </div>
     <table>
       <thead>
         <tr>
-          <th>${urUnder("Date", UR.date)}</th>
-          <th>${urUnder("Doc. No", UR.docNo)}</th>
-          <th>${urUnder("Remarks", UR.remarks)}</th>
-          <th class="num">${urUnder("Debit", UR.debitPKR)}</th>
-          <th class="num">${urUnder("Credit", UR.creditPKR)}</th>
-          <th class="num">${urUnder("Balance", UR.balancePKR)}</th>
+          <th>Date</th>
+          <th>Doc. No</th>
+          <th>Remarks</th>
+          <th class="num">Debit</th>
+          <th class="num">Credit</th>
+          <th class="num">Balance</th>
         </tr>
       </thead>
       <tbody>${bodyRows}</tbody>
       <tfoot>
         <tr>
-          <td colspan="2">${urUnder("TOTAL", UR.total)}</td>
+          <td colspan="2">TOTAL</td>
           <td>${entries.length} entr${entries.length === 1 ? "y" : "ies"}</td>
           <td class="num">${formatLedgerAmount(totalDebit)}</td>
           <td class="num">${formatLedgerAmount(totalCredit)}</td>
@@ -862,8 +851,8 @@ export function generatePartyLedgerHTML(
       </tfoot>
     </table>
     <div class="footer">
-      <span>${urUnder("Generated by Glassco Sanitary Fittings", UR.generatedBy)}</span>
-      <span>${urUnder(footerNoteEn, footerNoteUr)}</span>
+      <span>Generated by Glassco Sanitary Fittings</span>
+      <span>${footerNoteEn}</span>
       <div style="margin-top:14px;font-size:11px;text-align:center;color:#555;">${COMPANY_LEGAL_NAME}</div>
     </div>
     </body></html>`;

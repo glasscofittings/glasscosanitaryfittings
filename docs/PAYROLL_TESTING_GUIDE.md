@@ -164,5 +164,5 @@ npm run tauri dev
 | 5 | Post Accrual to GL | Single atomic JE, Dr 5010/5002, Cr 2300/1150 | [ ] |
 | 6 | Check Profit & Loss statement | Direct Labour appears under COGS above Gross Profit | [ ] |
 | 7 | Disburse Pay | Status -> `PAID`, Dr 2300 / Cr 1000/1002 | [ ] |
-| 8 | Export Disbursement PDF | Bilingual sheet with employees, accounts & amounts | [ ] |
+| 8 | Export Disbursement PDF | Sheet with employees, accounts & amounts | [ ] |
 | 9 | Labour Salary Card | Read-only with link to unified payroll | [ ] |

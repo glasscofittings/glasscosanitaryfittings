@@ -1,4 +1,3 @@
-import { UR, URDU_HTML_STYLES, numberToUrduWords, urSpan, urUnder } from "@/lib/pdf-urdu";
 import {
   DEFAULT_COMPANY,
   getExportDocumentTitle,
@@ -16,8 +15,6 @@ export interface VoucherPrintLine {
   accountHead: string;
   /** Short English explanation rendered under the account head. */
   description?: string;
-  /** Urdu translation of the description, rendered beneath it (RTL). */
-  descriptionUr?: string;
   /** Ref / Cheque No shown in the centre column. */
   ref?: string;
   debit?: number;
@@ -45,11 +42,11 @@ export interface VoucherPrintData {
   preparedBy?: string;
 }
 
-/** Sub-header per voucher type — spaced English letters + Urdu, per the ERP house style. */
-const VOUCHER_TITLES: Record<VoucherKind, { en: string; ur: string }> = {
-  RECEIPT: { en: "C A S H&nbsp;&nbsp;R E C E I P T&nbsp;&nbsp;V O U C H E R", ur: "رسید کیش وؤچر" },
-  PAYMENT: { en: "P A Y M E N T&nbsp;&nbsp;V O U C H E R", ur: "ادائی وؤچر" },
-  JOURNAL: { en: "J O U R N A L&nbsp;&nbsp;V O U C H E R", ur: "جرنل وؤچر" },
+/** Sub-header per voucher type — spaced English letters, per the ERP house style. */
+const VOUCHER_TITLES: Record<VoucherKind, string> = {
+  RECEIPT: "C A S H&nbsp;&nbsp;R E C E I P T&nbsp;&nbsp;V O U C H E R",
+  PAYMENT: "P A Y M E N T&nbsp;&nbsp;V O U C H E R",
+  JOURNAL: "J O U R N A L&nbsp;&nbsp;V O U C H E R",
 };
 
 const PAYMENT_MODE_BY_TYPE: Record<PaymentVoucher["voucher_type"], string> = {
@@ -105,12 +102,11 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
   const totalDebit = r2(data.lines.reduce((sum, l) => sum + Number(l.debit ?? 0), 0));
   const totalCredit = r2(data.lines.reduce((sum, l) => sum + Number(l.credit ?? 0), 0));
   const wordsEn = toWordsLine(r2(data.amount ?? totalDebit), data.amountInWords);
-  const wordsUr = numberToUrduWords(r2(data.amount ?? totalDebit));
 
-  const th = (en: string, ur: string, cls = "") =>
-    `<th${cls ? ` class="${cls}"` : ""}>${urUnder(en, ur)}</th>`;
-  const metaRow = (label: string, labelUr: string, value: string) =>
-    `<div class="kv"><span class="k">${label}${urSpan(labelUr, "margin-left:5px;")}</span><span class="v">${value}</span></div>`;
+  const th = (en: string, cls = "") =>
+    `<th${cls ? ` class="${cls}"` : ""}>${en}</th>`;
+  const metaRow = (label: string, value: string) =>
+    `<div class="kv"><span class="k">${label}</span><span class="v">${value}</span></div>`;
 
   const lineRows =
     data.lines.length > 0
@@ -125,7 +121,6 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
         <td>
           <div class="acct color:#27292bff;font-weight:600">${esc(ln.accountHead)}</div>
           ${ln.description ? `<div class="desc color:#27292bff;font-weight:600">${esc(ln.description)}</div>` : ""}
-          ${ln.descriptionUr ? `<div class="ur color:#27292bff;font-weight:600" lang="ur" dir="rtl">${esc(ln.descriptionUr)}</div>` : ""}
         </td>
         <td class="ctr mono">${ref ? esc(ref) : "&mdash;"}</td>
         <td class="num">${debit > 0 ? fmt(debit) : ""}</td>
@@ -133,12 +128,12 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       </tr>`;
           })
           .join("")
-      : `<tr><td class="empty" colspan="5">${urUnder("No ledger lines recorded for this voucher", UR.noLines)}</td></tr>`;
+      : `<tr><td class="empty" colspan="5">No ledger lines recorded for this voucher</td></tr>`;
 
   const totalRow =
     data.lines.length > 0
       ? `<tr class="total-row">
-        <td colspan="3">${urUnder("Total", UR.totalRow)}</td>
+        <td colspan="3">Total</td>
         <td class="num">${fmt(totalDebit)}</td>
         <td class="num">${fmt(totalCredit)}</td>
       </tr>`
@@ -149,23 +144,19 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
     <html lang="en"><head><meta charset="utf-8">
     <title>${esc(data.voucherNo)}</title>
     <style>
-      ${URDU_HTML_STYLES}
       @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap;}
       @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
       *{box-sizing:border-box;}
       html,body{margin:0;padding:0;background:#eef1f5;}
       body{font-family:${SERIF_FONT_FAMILY_CSS};color:#09090b;font-size:11px;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .ur,[lang="ur"]{font-family:'Amiri','Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
       .head{text-align:center;}
       .brand-name{font-size:${titleSize}px;line-height:1.15;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#09090b;}
       .rule{border-top:1px solid #45484dff;margin:8px 0;}
       .subtitle{font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#09090b;}
-      .subtitle .ur{text-transform:none;letter-spacing:normal;font-size:11px;}
       .meta{display:flex;justify-content:space-between;gap:8mm;margin-top:6mm;page-break-inside:avoid;}
       .meta-l{flex:1 1 auto;min-width:0;}
       .party-head{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#09090b;border-bottom:1px solid #cbd5e1;padding-bottom:5px;margin-bottom:4px;}
-      .party-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;color:#09090b;}
       .meta-l .kv{padding:2px 0;}
       .meta-l .kv .v{font-family:${SERIF_FONT_FAMILY_CSS};font-weight:800;white-space:normal;text-align:right;color:#09090b;word-break:break-word;}
       .meta-l .kv .v.name{font-size:14px;font-weight:800;}
@@ -176,7 +167,6 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       table.items{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:6mm;}
       table.items th,table.items td{border:1px solid #4170b3ff;padding:5px 6px;vertical-align:middle;}
       table.items thead th{background:#e8eef7;color:#09090b;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;text-align:left;}
-      table.items thead th .ur{text-align:inherit;text-transform:none;letter-spacing:normal;font-weight:800;font-size:12px;}
       table.items tbody td{font-size:14px;}
       table.items .ctr{text-align:center, font-size:12px;}
       table.items .num{text-align:right;white-space:nowrap;font-family:'Courier New',monospace, font-size:12px;}
@@ -189,12 +179,9 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       tr.total-row td{background:#EBF3FA;font-weight:900;color:#09090b;}
       .words{margin-top:5mm;background:#e8eef7;border:1px solid #43474bff;padding:7px 12px;page-break-inside:avoid;}
       .words-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:14px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#27292bff;}
-      .words-head .ur{text-transform:none;letter-spacing:normal;font-size:10.5px;}
       .words-en{font-size:14px;font-weight:800;color:#0f172a;margin-top:4px;}
-      .words .ur.words-ur{text-align:right;font-size:14px;margin-top:2px;color:#1e293b;}
       .narration{margin-top:4mm;border:1px solid #cbd5e1;padding:7px 12px;page-break-inside:avoid;}
       .nar-head{font-size:14px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#475569;}
-      .nar-head .ur{text-transform:none;letter-spacing:normal;font-size:10px;}
       .nar-body{margin-top:4px;font-size:11px;color:#1e293b;white-space:pre-wrap;}
       /* Page foot = signatures + footer as one atomic block: bottom-anchored via
          the flex auto-margin (dynamic spacing - it collapses so the block snaps
@@ -204,7 +191,6 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       .page-foot{margin-top:auto;break-inside:avoid;page-break-inside:avoid;break-before:avoid;page-break-before:avoid;}
       .signatures{display:flex;padding-top:16px;border-top:1px solid #09090b;page-break-inside:avoid;}
       .sig{flex:1;text-align:center;font-size:12px;font-weight:800;color:#0f172a;padding:0 6px;}
-      .sig .ur{text-align:center;font-weight:400;}
       .sig-name{margin-top:7px;font-size:10px;font-weight:400;color:#334155;border-top:1px dashed #94a3b8;display:inline-block;padding-top:3px;min-width:140px;}
       .footer{margin-top:12px;text-align:center;page-break-inside:avoid;}
       .footer .legal{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#334155;}
@@ -224,21 +210,21 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
       <div class="head">
         <div class="brand-name">${esc(docTitle)}</div>
         <div class="rule"></div>
-        <div class="subtitle">${title.en}&nbsp;&nbsp;/&nbsp;${urSpan(title.ur, "margin-left:4px;font-size:11px;letter-spacing:normal;")}</div>
+        <div class="subtitle">${title}</div>
       </div>
 
       <div class="meta">
         <div class="meta-l">
-          <div class="party-head">PARTY DETAILS${urSpan("پارٹی کی تفصیلات", " color:#27292bff;font-size:11px;margin-left:6px;")}</div>
+          <div class="party-head">PARTY DETAILS</div>
           <div class="kv"><span class="k">Account Title / Name</span><span class="v name">${esc(data.partyName) || "&mdash;"}</span></div>
           <div class="kv"><span class="k">Phone</span><span class="v">${esc(data.partyPhone) || "&mdash;"}</span></div>
           <div class="kv"><span class="k">Address</span><span class="v">${esc(data.partyAddress) || "&mdash;"}</span></div>
         </div>
         <div class="meta-r">
-          ${metaRow("Voucher No", "نمبر وؤچر", esc(data.voucherNo))}
-          ${metaRow("Date", UR.date, esc(fmtDate(data.voucherDate)))}
-          ${metaRow("Payment Mode", "طریقہ ادائی", esc(data.paymentMode || "Cash / Bank"))}
-          ${metaRow("Page", UR.pageOf, "1 of 1")}
+          ${metaRow("Voucher No", esc(data.voucherNo))}
+          ${metaRow("Date", esc(fmtDate(data.voucherDate)))}
+          ${metaRow("Payment Mode", esc(data.paymentMode || "Cash / Bank"))}
+          ${metaRow("Page", "1 of 1")}
         </div>
       </div>
 
@@ -248,34 +234,33 @@ export function generateVoucherHTML(data: VoucherPrintData): string {
         </colgroup>
         <thead>
           <tr>
-            ${th("Sr.#", UR.srNo, "ctr")}
-            ${th("Account Head & Description", "تفصیل کھاتہ")}
-            ${th("Ref / Cheque No", "ریفرنس نمبر", "ctr")}
-            ${th("Debit (Rs.)", UR.debit, "num")}
-            ${th("Credit (Rs.)", UR.credit, "num")}
+            ${th("Sr.#", "ctr")}
+            ${th("Account Head & Description")}
+            ${th("Ref / Cheque No", "ctr")}
+            ${th("Debit (Rs.)", "num")}
+            ${th("Credit (Rs.)", "num")}
           </tr>
         </thead>
         <tbody>${lineRows}${totalRow}</tbody>
       </table>
 
       <div class="words">
-        <div class="words-head"><span>Amount in Words</span>${urSpan("لفظوں میں رقم")}</div>
+        <div class="words-head"><span>Amount in Words</span></div>
         <div class="words-en">${esc(wordsEn)}</div>
-        <div class="ur words-ur" lang="ur" dir="rtl">${esc(wordsUr)}</div>
       </div>
 
       <div class="narration">
-        <div class="nar-head">Description / Particulars${urSpan(UR.narrationDescription, "margin-left:6px;")}</div>
+        <div class="nar-head">Description / Particulars</div>
         <div class="nar-body">${esc(data.narration) || "&mdash;"}</div>
       </div>
 
       <div class="page-foot">
         <div class="signatures">
-          <div class="sig">${urUnder("Prepared By", UR.preparedBy)}${
+          <div class="sig">Prepared By${
             data.preparedBy ? `<div class="sig-name">${esc(data.preparedBy)}</div>` : ""
           }</div>
-          <div class="sig">${urUnder("Receiver Signature", UR.receivedBy)}</div>
-          <div class="sig">${urUnder("Authorised Signatory", UR.authorisedSignatory)}</div>
+          <div class="sig">Receiver Signature</div>
+          <div class="sig">Authorised Signatory</div>
         </div>
 
         <div class="footer">
@@ -357,7 +342,6 @@ export function paymentVoucherPrintData(
       {
         accountHead: debitHead,
         description: v.purpose ?? undefined,
-        descriptionUr: v.purpose_ur ?? undefined,
         debit: v.amount,
       },
       {

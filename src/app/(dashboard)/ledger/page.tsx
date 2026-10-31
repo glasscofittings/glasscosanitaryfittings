@@ -24,15 +24,6 @@ import {
   exportProfitLossPDF,
   exportBalanceSheetPDF,
 } from "@/lib/pdf-exporter";
-import {
-  accountUrdu,
-  buildTranslatedAccountMap,
-  collectJournalAccountNames,
-  collectStatementNames,
-  staticUrdu,
-  type UrduNameMap,
-} from "@/lib/report-i18n";
-import { UrduUnder, BiLabel } from "@/components/shared/UrduText";
 import { fetchParties, type Party } from "@/lib/supabase/crm";
 import {
   balanceAmountLabel,
@@ -99,8 +90,6 @@ export default function LedgerPage() {
   const [parties, setParties] = useState<Party[]>([]);
   const [entries, setEntries] = useState<JournalEntryWithLines[]>([]);
   const [statements, setStatements] = useState<FinancialStatements | null>(null);
-  /** English → Urdu account names, pre-translated once so rows/PDFs render bilingual. */
-  const [accountUrduMap, setAccountUrduMap] = useState<UrduNameMap>({});
   const [isLive, setIsLive] = useState(false);
   const [newEntryOpen, setNewEntryOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -128,19 +117,6 @@ export default function LedgerPage() {
     return () => { cancelled = true; };
   }, [fetchAll]);
 
-  // One translation batch for every account name / statement label on this page.
-  useEffect(() => {
-    if (!statements) return;
-    let cancelled = false;
-    buildTranslatedAccountMap([
-      ...collectStatementNames(statements),
-      ...collectJournalAccountNames(entries),
-    ])
-      .then((map) => { if (!cancelled) setAccountUrduMap(map); })
-      .catch((err) => console.warn("[ledger] account translation failed:", err));
-    return () => { cancelled = true; };
-  }, [statements, entries]);
-
   async function loadData() {
     const [acc, ent, stmt, pts] = await fetchAll();
     setAccounts(acc);
@@ -165,19 +141,19 @@ export default function LedgerPage() {
 
   async function handleExportPDF() {
     if (!statements) return;
-    await exportLedgerReportPDF({ entries, statements, operatorName: OPERATOR, urduMap: accountUrduMap });
+    await exportLedgerReportPDF({ entries, statements, operatorName: OPERATOR });
   }
 
   /** Per-tab export, so a single statement can be filed without the rest of the ledger. */
   async function handleExportSection() {
     if (tab === "journal") {
-      await exportJournalPDF({ entries, operatorName: OPERATOR, urduMap: accountUrduMap });
+      await exportJournalPDF({ entries, operatorName: OPERATOR });
       return;
     }
     if (!statements) return;
-    if (tab === "trial") await exportTrialBalancePDF({ statements, operatorName: OPERATOR, urduMap: accountUrduMap });
-    else if (tab === "pl") await exportProfitLossPDF({ statements, operatorName: OPERATOR, urduMap: accountUrduMap });
-    else await exportBalanceSheetPDF({ statements, operatorName: OPERATOR, urduMap: accountUrduMap });
+    if (tab === "trial") await exportTrialBalancePDF({ statements, operatorName: OPERATOR });
+    else if (tab === "pl") await exportProfitLossPDF({ statements, operatorName: OPERATOR });
+    else await exportBalanceSheetPDF({ statements, operatorName: OPERATOR });
   }
 
   async function handlePost(entryId: string) {
@@ -518,7 +494,7 @@ export default function LedgerPage() {
                       compact
                       label="PDF"
                       title={`Export entry ${entry.entry_number} as a PDF`}
-                      onClick={() => void exportJournalEntryPDF({ entry, operatorName: OPERATOR, urduMap: accountUrduMap })}
+                      onClick={() => void exportJournalEntryPDF({ entry, operatorName: OPERATOR })}
                     />
                     {entry.status === "DRAFT" && (
                       <>
@@ -744,7 +720,6 @@ export default function LedgerPage() {
                       <td className="px-4 py-2.5 font-mono text-body text-secondary">{row.account_code}</td>
                       <td className="px-4 py-2.5">
                         <div className="text-body font-medium text-foreground">{row.account_name}</div>
-                        <UrduUnder ur={accountUrdu(row.account_name, accountUrduMap, row.name_urdu)} />
                         {row.subParties && row.subParties.length > 0 && (
                           <div className="mt-1 space-y-1">
                             {row.subParties.map((sub: SubPartyItem) => (
@@ -787,7 +762,6 @@ export default function LedgerPage() {
                         <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${typeColor(row.account_type)}`}>
                           {row.account_type}
                         </span>
-                        <UrduUnder ur={staticUrdu(row.account_type)} />
                       </td>
                       <td className="px-4 py-2.5 text-body font-mono text-right whitespace-nowrap text-foreground">
                         {row.total_debit > 0 ? formatPKR(row.total_debit) : "—"}
@@ -820,7 +794,7 @@ export default function LedgerPage() {
                 <tfoot>
                   <tr className="border-t border-border-default bg-bg-subtle">
                     <td colSpan={3} className="px-4 py-2.5 text-body font-semibold text-foreground">
-                      <BiLabel en={trialSearchQuery ? "Filtered Totals" : "Grand Totals"} />
+                      {trialSearchQuery ? "Filtered Totals" : "Grand Totals"}
                     </td>
                     <td className="px-4 py-2.5 text-body font-mono font-semibold text-right whitespace-nowrap text-foreground">
                       {formatPKR(filteredTrialBalance.reduce((a: number, r: TrialBalanceRowWithSubParties) => a + r.total_debit, 0))}
@@ -842,19 +816,17 @@ export default function LedgerPage() {
           <SectionExportBar label="Profit & Loss" onExport={handleExportSection} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="glass-card p-5 space-y-3">
-              <h3 className="text-h2 font-semibold text-status-optimal"><BiLabel en="Revenue" /></h3>
+              <h3 className="text-h2 font-semibold text-status-optimal">Revenue</h3>
               <div className="glow-line" />
               {statements.pl.revenue.length === 0 ? (
                 <p className="text-caption text-muted py-4 text-center">
                   No revenue entries
-                  <UrduUnder ur={staticUrdu("No revenue entries")} />
                 </p>
               ) : (
                 statements.pl.revenue.map((r) => (
                   <div key={r.account_code} className="flex justify-between text-body">
                     <span className="text-secondary">
                       {r.account_name}
-                      <UrduUnder ur={accountUrdu(r.account_name, accountUrduMap, r.name_urdu)} />
                     </span>
                     <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(r.amount)}</span>
                   </div>
@@ -862,7 +834,7 @@ export default function LedgerPage() {
               )}
               <div className="glow-line" />
               <div className="flex justify-between text-body font-semibold">
-                <span><BiLabel en="Total Revenue" /></span>
+                <span>Total Revenue</span>
                 <span className="font-mono text-num-kpi text-status-optimal whitespace-nowrap">
                   {formatPKR(statements.pl.revenue.reduce((a, r) => a + r.amount, 0))}
                 </span>
@@ -870,19 +842,17 @@ export default function LedgerPage() {
             </div>
 
             <div className="glass-card p-5 space-y-3">
-              <h3 className="text-h2 font-semibold text-status-error"><BiLabel en="Expenses" /></h3>
+              <h3 className="text-h2 font-semibold text-status-error">Expenses</h3>
               <div className="glow-line" />
               {statements.pl.expenses.length === 0 ? (
                 <p className="text-caption text-muted py-4 text-center">
                   No expense entries
-                  <UrduUnder ur={staticUrdu("No expense entries")} />
                 </p>
               ) : (
                 statements.pl.expenses.map((r) => (
                   <div key={r.account_code} className="flex justify-between text-body">
                     <span className="text-secondary">
                       {r.account_name}
-                      <UrduUnder ur={accountUrdu(r.account_name, accountUrduMap, r.name_urdu)} />
                     </span>
                     <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(r.amount)}</span>
                   </div>
@@ -890,7 +860,7 @@ export default function LedgerPage() {
               )}
               <div className="glow-line" />
               <div className="flex justify-between text-body font-semibold">
-                <span><BiLabel en="Total Expenses" /></span>
+                <span>Total Expenses</span>
                 <span className="font-mono text-num-kpi text-status-error whitespace-nowrap">
                   {formatPKR(statements.pl.expenses.reduce((a, r) => a + r.amount, 0))}
                 </span>
@@ -899,7 +869,7 @@ export default function LedgerPage() {
 
             <div className="md:col-span-2 glass-card p-5">
               <div className="flex justify-between items-center">
-                <span className="text-h2 font-semibold"><BiLabel en={statements.pl.netProfit >= 0 ? "Net Profit" : "Net Loss"} /></span>
+                <span className="text-h2 font-semibold">{statements.pl.netProfit >= 0 ? "Net Profit" : "Net Loss"}</span>
                 <span className={`font-mono font-bold ${statements.pl.netProfit >= 0 ? "text-status-optimal" : "text-status-error"}`} style={{ fontSize: "1.5rem", lineHeight: "2rem" }}>
                   {formatPKR(statements.pl.netProfit)}
                 </span>
@@ -914,19 +884,17 @@ export default function LedgerPage() {
           <SectionExportBar label="Balance Sheet" onExport={handleExportSection} />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="glass-card p-5 space-y-3">
-              <h3 className="text-h2 font-semibold"><BiLabel en="Assets" /></h3>
+              <h3 className="text-h2 font-semibold">Assets</h3>
               <div className="glow-line" />
               {statements.balanceSheet.assets.length === 0 ? (
                 <p className="text-caption text-muted py-4 text-center">
                   No asset entries
-                  <UrduUnder ur={staticUrdu("No asset entries")} />
                 </p>
               ) : (
                 statements.balanceSheet.assets.map((r) => (
                   <div key={r.account_code} className="flex justify-between text-body">
                     <span className="text-secondary">
                       {r.account_name}
-                      <UrduUnder ur={accountUrdu(r.account_name, accountUrduMap, r.name_urdu)} />
                     </span>
                     <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(r.amount)}</span>
                   </div>
@@ -934,25 +902,23 @@ export default function LedgerPage() {
               )}
               <div className="glow-line" />
               <div className="flex justify-between text-body font-semibold">
-                <span><BiLabel en="Total Assets" /></span>
+                <span>Total Assets</span>
                 <span className="font-mono text-num-kpi text-foreground whitespace-nowrap">{formatPKR(statements.totalAssets)}</span>
               </div>
             </div>
 
             <div className="glass-card p-5 space-y-3">
-              <h3 className="text-h2 font-semibold"><BiLabel en="Liabilities" /></h3>
+              <h3 className="text-h2 font-semibold">Liabilities</h3>
               <div className="glow-line" />
               {statements.balanceSheet.liabilities.length === 0 ? (
                 <p className="text-caption text-muted py-4 text-center">
                   No liability entries
-                  <UrduUnder ur={staticUrdu("No liability entries")} />
                 </p>
               ) : (
                 statements.balanceSheet.liabilities.map((r) => (
                   <div key={r.account_code} className="flex justify-between text-body">
                     <span className="text-secondary">
                       {r.account_name}
-                      <UrduUnder ur={accountUrdu(r.account_name, accountUrduMap, r.name_urdu)} />
                     </span>
                     <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(r.amount)}</span>
                   </div>
@@ -960,19 +926,18 @@ export default function LedgerPage() {
               )}
               <div className="glow-line" />
               <div className="flex justify-between text-body font-semibold">
-                <span><BiLabel en="Total Liabilities" /></span>
+                <span>Total Liabilities</span>
                 <span className="font-mono text-num-kpi text-foreground whitespace-nowrap">{formatPKR(statements.totalLiabilities)}</span>
               </div>
             </div>
 
             <div className="glass-card p-5 space-y-3">
-              <h3 className="text-h2 font-semibold"><BiLabel en="Equity + Profit" /></h3>
+              <h3 className="text-h2 font-semibold">Equity + Profit</h3>
               <div className="glow-line" />
               {statements.balanceSheet.equity.map((r) => (
                 <div key={r.account_code} className="flex justify-between text-body">
                   <span className="text-secondary">
                     {r.account_name}
-                    <UrduUnder ur={accountUrdu(r.account_name, accountUrduMap, r.name_urdu)} />
                   </span>
                   <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(r.amount)}</span>
                 </div>
@@ -980,20 +945,19 @@ export default function LedgerPage() {
               <div className="flex justify-between text-body">
                 <span className="text-secondary">
                   Net Profit (P&amp;L)
-                  <UrduUnder ur={staticUrdu("Net Profit (P&L)")} />
                 </span>
                 <span className="font-mono text-num-table text-foreground whitespace-nowrap">{formatPKR(statements.pl.netProfit)}</span>
               </div>
               <div className="glow-line" />
               <div className="flex justify-between text-body font-semibold">
-                <span><BiLabel en="Total Equity" /></span>
+                <span>Total Equity</span>
                 <span className="font-mono text-num-kpi text-foreground whitespace-nowrap">{formatPKR(statements.totalEquity)}</span>
               </div>
             </div>
 
             <div className="md:col-span-3 glass-card p-5">
               <div className="flex justify-between items-center">
-                <span className="text-h2 font-semibold"><BiLabel en="Balance Check" /></span>
+                <span className="text-h2 font-semibold">Balance Check</span>
                 <div className="flex items-center gap-4">
                   <div className="text-right">
                     <p className="text-caption text-muted">Assets</p>
@@ -1003,7 +967,6 @@ export default function LedgerPage() {
                   <div className="text-right">
                     <p className="text-caption text-muted">
                       Liabilities + Equity
-                      <UrduUnder ur={staticUrdu("Liabilities + Equity")} />
                     </p>
                     <p className="font-mono text-body font-semibold">{formatPKR(statements.totalLiabilities + statements.totalEquity)}</p>
                   </div>

@@ -1,10 +1,9 @@
 "use client";
 
-import { type SalesInvoice, calcLineDiscountAmount, generateInvoiceHTML, postInvoiceWithLedger, resolveInvoiceItemBrands, findDispatchRecordByInvoice, approveDispatch } from "@/lib/supabase/invoicing";
+import { type SalesInvoice, calcLineDiscountAmount, generateInvoiceHTML, postInvoiceWithLedger, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { useOperatorStore } from "@/lib/store/useOperatorStore";
 import { toast } from "sonner";
-import { translateBatchToUrdu } from "@/lib/geminiTranslator";
 import { formatPKR } from "@/lib/utils/formatters";
 import { loadCompanyProfile } from "@/lib/company-settings";
 import { COMPANY_HEADER, COMPANY_LEGAL_NAME } from "@/lib/branding";
@@ -49,55 +48,13 @@ export default function InvoicePreviewDrawer({ invoice, open, onClose, onPosted 
     setPosting(true);
     setError(null);
     try {
-      const dispatch = await findDispatchRecordByInvoice(invoice.id);
-
-      // Pending dispatch → approval is the ONLY way to post: it flips the
-      // status, deducts stock, and debits the customer's ledger together.
-      if (dispatch && (dispatch.status ?? "dispatched") === "pending_approval") {
-        let operatorName: string;
-        try {
-          operatorName = await useOperatorStore.getState().open("Approve Dispatch");
-        } catch {
-          return; // operator cancelled attribution — nothing must happen
-        }
-        const result = await approveDispatch(
-          dispatch.id,
-          operatorName,
-          process.env.NEXT_PUBLIC_DEVICE_NODE_ID ?? "PC-01",
-        );
-        if (result.success) {
-          toast.success(
-            result.alreadyApproved
-              ? `${invoice.invoice_number} was already approved.`
-              : `Dispatch approved — stock deducted and customer ledger updated.`,
-          );
-          onPosted();
-          onClose();
-        } else {
-          setError(result.error ?? "Approval failed. Please check stock and ledger accounts and try again.");
-        }
-        return;
+      const ok = await postInvoiceWithLedger(invoice);
+      if (ok) {
+        onPosted();
+        onClose();
+      } else {
+        setError("Failed to post invoice. Please check ledger accounts and try again.");
       }
-
-      // Invoices from before the approval workflow had their stock deducted at
-      // creation (stock_deducted=true) — posting their ledger directly stays valid.
-      if (invoice.stock_deducted) {
-        const ok = await postInvoiceWithLedger(invoice);
-        if (ok) {
-          onPosted();
-          onClose();
-        } else {
-          setError("Failed to post invoice. Please check ledger accounts and try again.");
-        }
-        return;
-      }
-
-      // New-flow invoice that has not been printed yet: printing creates its
-      // pending dispatch, and approval posts everything. Posting straight from
-      // here would put the ledger debit ahead of the approval step.
-      setError(
-        "This invoice is awaiting dispatch approval. Print it to create its dispatch entry, then approve it from Dispatch History.",
-      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error posting invoice");
     } finally {
@@ -109,17 +66,8 @@ export default function InvoicePreviewDrawer({ invoice, open, onClose, onPosted 
     if (!invoice || printing) return;
     setPrinting(true);
     try {
-      // Batch-translate item descriptions to Urdu before generating the document.
-      // Falls back to the original English text when the Gemini key is missing or the call fails.
-      const sourceNames = (invoice.items ?? []).map((item) => item.product_name);
-      const translatedNames = await translateBatchToUrdu(sourceNames);
-      const urduItemNames = sourceNames.map((source, index) => {
-        const translated = translatedNames[index];
-        return translated && translated !== source ? translated : undefined;
-      });
-
       const itemBrands = await resolveInvoiceItemBrands(invoice.items ?? []);
-      const html = generateInvoiceHTML(invoice, { urduItemNames, itemBrands });
+      const html = generateInvoiceHTML(invoice, { itemBrands });
       const iframe = document.createElement("iframe");
       iframe.style.position = "fixed";
       iframe.style.right = "0";
@@ -298,7 +246,7 @@ export default function InvoicePreviewDrawer({ invoice, open, onClose, onPosted 
               disabled={printing}
               className="flex-1 h-9 rounded-lg bg-bg-muted text-secondary border border-border-default font-medium text-body hover:text-foreground hover:bg-bg-subtle disabled:opacity-60 disabled:cursor-wait transition-colors"
             >
-              {printing ? "Translating..." : "Print / Save PDF"}
+              {printing ? "Printing..." : "Print / Save PDF"}
             </button>
             <button
               onClick={onClose}
