@@ -3,6 +3,7 @@ import { fetchPartyPaymentVouchers, type PaymentVoucher } from "@/lib/supabase/p
 import { getCompanyLogoHtml, getExportCompanyName } from "@/lib/company-settings";
 import { COMPANY_HEADER, COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME } from "@/lib/branding";
 import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
+import { PRINT_HEAD_META, PRINT_BASE_CSS } from "@/lib/print-html";
 import {
   balanceAmountLabel,
   balanceSide,
@@ -765,12 +766,13 @@ export function generatePartyLedgerHTML(
 
   return `
     <!DOCTYPE html>
-    <html><head><meta charset="utf-8">
+    <html><head><meta charset="utf-8">${PRINT_HEAD_META}
     <title>${reportTitle} - ${escapeHtml(party.name)}</title>
     <style>
       @page{size:A4;margin:14mm 12mm 18mm 12mm;}
       ${SANS_FONT_FACES_CSS}
       body{font-family:${SANS_FONT_FAMILY_CSS};margin:0;padding:0;color:#111;font-size:12px;font-weight:400;}
+      ${PRINT_BASE_CSS}
       .stamp{text-align:right;font-size:11px;color:#333;margin-bottom:6px;}
       .company{font-size:${COMPANY_HEADER_FONT_SIZE_PX}px;font-weight:700;margin:0;}
       .company-block{display:flex;align-items:center;gap:10px;}

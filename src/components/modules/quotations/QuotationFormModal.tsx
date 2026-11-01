@@ -20,6 +20,7 @@ import {
 } from "@/lib/supabase/quotations";
 import { fetchEstimatedCosts } from "@/lib/supabase/quotations";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { setDocumentDateTime, toLocalInputValue, fromLocalInputValue } from "@/lib/supabase/document-datetime";
 
 interface QuotationFormModalProps {
   isOpen: boolean;
@@ -94,6 +95,11 @@ export default function QuotationFormModal({
   const [quotationDate, setQuotationDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
+  const [quoteTime, setQuoteTime] = useState("00:00");
+  const [dtReason, setDtReason] = useState("");
+  // Original date/time snapshot (edit mode only) for change detection.
+  const [origDate, setOrigDate] = useState<string | null>(null);
+  const [origTime, setOrigTime] = useState<string | null>(null);
   const [validUntil, setValidUntil] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -131,6 +137,12 @@ export default function QuotationFormModal({
     if (!isOpen) return;
     if (editQuotation) {
       setQuotationDate(editQuotation.quotation_date.slice(0, 10));
+      const createdLocal = toLocalInputValue(editQuotation.created_at);
+      const createdTime = createdLocal.slice(11, 16) || "00:00";
+      setQuoteTime(createdTime);
+      setOrigDate(editQuotation.quotation_date.slice(0, 10));
+      setOrigTime(createdTime);
+      setDtReason("");
       setValidUntil(editQuotation.valid_until?.slice(0, 10) ?? "");
       setCustomerId(editQuotation.customer_id ?? "");
       setCustomerName(editQuotation.customer_name ?? "");
@@ -158,6 +170,10 @@ export default function QuotationFormModal({
       );
     } else {
       setQuotationDate(new Date().toISOString().slice(0, 10));
+      setQuoteTime("00:00");
+      setOrigDate(null);
+      setOrigTime(null);
+      setDtReason("");
       const d = new Date();
       d.setDate(d.getDate() + 30);
       setValidUntil(d.toISOString().slice(0, 10));
@@ -179,6 +195,12 @@ export default function QuotationFormModal({
     () => calculateQuotationTotals(items, num(additionalCharges)),
     [items, additionalCharges],
   );
+
+  // Edit mode only: did the user change the quotation date or time?
+  const dateTimeChanged =
+    !!editQuotation &&
+    origDate !== null &&
+    (quotationDate !== origDate || quoteTime !== origTime);
 
   const updateLine = (key: string, patch: Partial<LineDraft>) => {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -253,6 +275,10 @@ export default function QuotationFormModal({
       toast.error("Please correct the errors in the quotation.");
       return;
     }
+    if (dateTimeChanged && !dtReason.trim()) {
+      toast.error("A reason is required to change the date/time.");
+      return;
+    }
 
     setIsSubmitting(true);
     lastSubmitRef.current = now;
@@ -280,6 +306,21 @@ export default function QuotationFormModal({
       if (result.error || !result.quotation) {
         toast.error(result.error ?? "Failed to save the quotation.");
         return;
+      }
+
+      if (editQuotation && dateTimeChanged) {
+        const dtResult = await setDocumentDateTime({
+          docType: "QUOTATION",
+          id: editQuotation.id,
+          at: fromLocalInputValue(`${quotationDate}T${quoteTime}`),
+          reason: dtReason.trim(),
+          operator: profile?.email || "Terminal Operator",
+        });
+        if (!dtResult.ok) {
+          // Keep the modal open so the date/time edit can be retried.
+          toast.error(dtResult.error ?? "Failed to update the quotation date/time.");
+          return;
+        }
       }
 
       toast.success(
@@ -328,16 +369,46 @@ export default function QuotationFormModal({
           {/* Dates + Customer */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <label className="block text-xs font-medium text-foreground mb-1">
-                Quotation Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={quotationDate}
-                onChange={(e) => setQuotationDate(e.target.value)}
-                className={inputCls}
-                required
-              />
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-foreground mb-1">
+                    Quotation Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={quotationDate}
+                    onChange={(e) => setQuotationDate(e.target.value)}
+                    className={inputCls}
+                    required
+                  />
+                </div>
+                {editQuotation && (
+                  <div className="w-[120px] shrink-0">
+                    <label className="block text-xs font-medium text-foreground mb-1">Time</label>
+                    <input
+                      type="time"
+                      value={quoteTime}
+                      onChange={(e) => setQuoteTime(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                )}
+              </div>
+              {editQuotation && dateTimeChanged && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={dtReason}
+                    onChange={(e) => setDtReason(e.target.value)}
+                    placeholder="Reason for changing date/time *"
+                    className={inputCls}
+                    required
+                  />
+                  <p className="text-[11px] text-amber-500 mt-1">
+                    This change is recorded in the audit log.
+                  </p>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-foreground mb-1">Valid Until</label>

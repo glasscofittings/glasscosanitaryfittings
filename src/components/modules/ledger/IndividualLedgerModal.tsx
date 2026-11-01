@@ -17,6 +17,7 @@ import {
   type StatementAccountRef,
 } from "@/lib/party-statement";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
+import { printHtmlInBrowser } from "@/lib/print-html";
 
 export interface IndividualLedgerTarget {
   type: "PARTY" | "ACCOUNT";
@@ -483,41 +484,7 @@ export default function IndividualLedgerModal({
       conventionNote,
     });
 
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "none";
-    document.body.appendChild(iframe);
-
-    const frameDoc = iframe.contentWindow?.document;
-    if (frameDoc) {
-      frameDoc.open();
-      frameDoc.write(html);
-      frameDoc.close();
-      iframe.contentWindow?.focus();
-      setTimeout(() => {
-        // Browsers stamp the page title into the print header; blank it while
-        // the dialog is open so the header carries no company name, then restore.
-        const previousTitle = document.title;
-        const previousFrameTitle = frameDoc.title;
-        document.title = " ";
-        frameDoc.title = " ";
-        try {
-          iframe.contentWindow?.print();
-        } finally {
-          document.title = previousTitle;
-          frameDoc.title = previousFrameTitle;
-        }
-        setTimeout(() => {
-          if (iframe.parentNode) document.body.removeChild(iframe);
-        }, 1500);
-      }, 350);
-    } else {
-      document.body.removeChild(iframe);
-    }
+    await printHtmlInBrowser(html);
   }
 
   // Export PDF via jsPDF + autoTable

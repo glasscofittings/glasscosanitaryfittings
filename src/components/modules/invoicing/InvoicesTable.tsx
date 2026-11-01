@@ -2,6 +2,7 @@
 
 import { type SalesInvoice } from "@/lib/supabase/invoicing";
 import { formatPKR } from "@/lib/utils/formatters";
+import { formatDateTimePKT } from "@/lib/supabase/document-datetime";
 
 interface Props {
   invoices: SalesInvoice[];
@@ -45,6 +46,7 @@ export default function InvoicesTable({ invoices, onPost, onView, onEdit, onDele
           <thead>
             <tr className="border-b border-border-subtle">
               <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[140px]">Invoice #</th>
+              <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[160px]">Date &amp; Time</th>
               <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[160px]">Customer</th>
               <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[200px]">Products</th>
               <th className="px-4 py-3 text-caption text-muted font-medium uppercase tracking-wider min-w-[120px] text-right">Discount</th>
@@ -58,7 +60,7 @@ export default function InvoicesTable({ invoices, onPost, onView, onEdit, onDele
           <tbody>
             {invoices.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted">
+                <td colSpan={10} className="px-4 py-8 text-center text-sm text-muted">
                   {emptyMessage || "No invoices found matching your search"}
                 </td>
               </tr>
@@ -74,6 +76,9 @@ export default function InvoicesTable({ invoices, onPost, onView, onEdit, onDele
                 >
                   <td className="px-4 py-3">
                     <span className="font-mono text-num-code text-secondary whitespace-nowrap">{inv.invoice_number}</span>
+                  </td>
+                  <td className="px-4 py-3 text-caption text-secondary whitespace-nowrap">
+                    {formatDateTimePKT(inv.created_at)}
                   </td>
                   <td className="px-4 py-3 text-body text-foreground truncate" onClick={(e) => inv.parties?.id && e.stopPropagation()}>
                     {inv.parties ? (

@@ -4,6 +4,7 @@ import { type SalesInvoice, generateInvoiceHTML, resolveInvoiceItemBrands } from
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { getCompanyLogoHtml } from "@/lib/company-settings";
 import { COMPANY_HEADER, COMPANY_HEADER_FONT_SIZE_PX, COMPANY_LEGAL_NAME, SERIF_FONT_FAMILY_CSS } from "@/lib/branding";
+import { PRINT_HEAD_META, PRINT_BASE_CSS, printHtmlInBrowser } from "@/lib/print-html";
 
 interface Props {
   invoice: SalesInvoice | null;
@@ -19,27 +20,7 @@ export default function OutwardGatePass({ invoice, open, onClose }: Props) {
   async function handlePrintInvoice() {
     const itemBrands = await resolveInvoiceItemBrands(invoice?.items ?? []);
     const html = generateInvoiceHTML(invoice!, { itemBrands });
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "none";
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow?.document;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-      iframe.contentWindow?.focus();
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(iframe), 1000);
-      }, 500);
-    } else {
-      document.body.removeChild(iframe);
-    }
+    return printHtmlInBrowser(html);
   }
 
   function handlePrint() {
@@ -52,9 +33,10 @@ export default function OutwardGatePass({ invoice, open, onClose }: Props) {
 
     const html = `
       <!DOCTYPE html>
-      <html><head><meta charset="utf-8"><title>OGP - ${invoice!.invoice_number}</title>
+      <html><head><meta charset="utf-8">${PRINT_HEAD_META}<title>OGP - ${invoice!.invoice_number}</title>
       <style>
         body{font-family:${SERIF_FONT_FAMILY_CSS};margin:0;padding:20px;color:#0f172a;}
+        ${PRINT_BASE_CSS}
         @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Regular.ttf') format('truetype');font-style:normal;font-weight:400;font-display:swap;}
         @font-face{font-family:'PT Serif';src:url('/fonts/PT_Serif-Web-Bold.ttf') format('truetype');font-style:normal;font-weight:700;font-display:swap;}
         .header{display:flex;justify-content:space-between;border-bottom:2px solid #dc2626;padding-bottom:12px;margin-bottom:16px;}
@@ -132,27 +114,7 @@ export default function OutwardGatePass({ invoice, open, onClose }: Props) {
       <div style="margin-top:14px;font-size:11px;text-align:center;color:#555;">${COMPANY_LEGAL_NAME}</div>
     </div>
     </body></html>`;
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "none";
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow?.document;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-      iframe.contentWindow?.focus();
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(iframe), 1000);
-      }, 500);
-    } else {
-      document.body.removeChild(iframe);
-    }
+    return printHtmlInBrowser(html);
   }
 
   return (

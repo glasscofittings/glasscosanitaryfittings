@@ -2,9 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { type Party, type SalesInvoice, type DispatchLineItem, updateInvoice, updateInvoiceItems } from "@/lib/supabase/invoicing";
 import { formatPKR } from "@/lib/utils/formatters";
+import { useAuth } from "@/components/providers/AuthProvider";
+import DateTimeEditField from "@/components/shared/DateTimeEditField";
+import { setDocumentDateTime, toLocalInputValue, fromLocalInputValue } from "@/lib/supabase/document-datetime";
 
 interface LineItem {
   key: string;
@@ -70,6 +74,12 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
     const pctPart = Math.round(gross0 * ((invoice.discount_percent ?? 0) / 100) * 100) / 100;
     return Math.max(0, Math.round((stored - pctPart) * 100) / 100);
   });
+
+  const { profile } = useAuth();
+  const [originalDateTime] = useState(() => toLocalInputValue(invoice.created_at));
+  const [dateTime, setDateTime] = useState(originalDateTime);
+  const [dtReason, setDtReason] = useState("");
+  const dateTimeChanged = dateTime !== originalDateTime;
 
   useEffect(() => {
     if (!SUPABASE_URL) return;
@@ -160,6 +170,10 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
 
   async function handleSubmit() {
     if (!isValid) return;
+    if (dateTimeChanged && !dtReason.trim()) {
+      setError("A reason is required to change the date/time.");
+      return;
+    }
     setSubmitting(true);
     setError("");
 
@@ -187,6 +201,21 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
     setSubmitting(false);
 
     if (itemsOk) {
+      if (dateTimeChanged) {
+        const dtResult = await setDocumentDateTime({
+          docType: "INVOICE",
+          id: invoice.id,
+          at: fromLocalInputValue(dateTime),
+          reason: dtReason.trim(),
+          operator: profile?.email || "Terminal Operator",
+        });
+        if (!dtResult.ok) {
+          const msg = dtResult.error ?? "Failed to update the invoice date/time.";
+          toast.error(msg);
+          setError(msg);
+          return;
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ["invoices"] });
       onSaved();
       onClose();
@@ -219,6 +248,13 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
           </div>
 
           <div className="p-5 space-y-4 overflow-y-auto flex-1">
+            <DateTimeEditField
+              value={dateTime}
+              onChange={setDateTime}
+              reason={dtReason}
+              onReasonChange={setDtReason}
+              changed={dateTimeChanged}
+            />
             <div>
               <label className={labelCls}>Customer</label>
               <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>

@@ -6,6 +6,7 @@ import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { type SalesInvoice, type DispatchLineItem, triggerPrint, generateInvoiceHTML, createDispatchRecord, dispatchItemsToInvoiceItems, resolveInvoiceItemBrands } from "@/lib/supabase/invoicing";
 import { useOperatorStore } from "@/lib/store/useOperatorStore";
 import { formatPKR } from "@/lib/utils/formatters";
+import { printHtmlInBrowser } from "@/lib/print-html";
 
 interface Props {
   invoice: SalesInvoice | null;
@@ -163,27 +164,7 @@ export default function PostPrintDrawer({ invoice, lineItems = [], open, onClose
     if (!invoice) return;
     const itemBrands = await resolveInvoiceItemBrands(printableInvoice.items ?? []);
     const html = generateInvoiceHTML(printableInvoice, { itemBrands });
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "none";
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow?.document;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-      iframe.contentWindow?.focus();
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(iframe), 1000);
-      }, 500);
-    } else {
-      document.body.removeChild(iframe);
-    }
+    return printHtmlInBrowser(html);
   }
 
   function handleClose() {

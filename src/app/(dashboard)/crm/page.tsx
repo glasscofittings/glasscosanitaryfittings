@@ -18,6 +18,7 @@ import { exportPartiesToPDF } from "@/lib/pdf-exporter";
 import { balanceAmountLabel, balanceSide } from "@/lib/party-statement";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import { capitalizeFirst } from "@/lib/utils";
+import { printHtmlInBrowser } from "@/lib/print-html";
 
 type FilterTab = "ALL" | "BUYER" | "SUPPLIER";
 
@@ -124,27 +125,7 @@ export default function CRMPage() {
       const details = await fetchPartyDetails(party.id);
       if (!details) return;
       const html = generatePartyLedgerHTML(details, details.ledger);
-      const iframe = document.createElement("iframe");
-      iframe.style.position = "fixed";
-      iframe.style.right = "0";
-      iframe.style.bottom = "0";
-      iframe.style.width = "0";
-      iframe.style.height = "0";
-      iframe.style.border = "none";
-      document.body.appendChild(iframe);
-      const doc = iframe.contentWindow?.document;
-      if (doc) {
-        doc.open();
-        doc.write(html);
-        doc.close();
-        iframe.contentWindow?.focus();
-        setTimeout(() => {
-          iframe.contentWindow?.print();
-          setTimeout(() => document.body.removeChild(iframe), 1000);
-        }, 500);
-      } else {
-        document.body.removeChild(iframe);
-      }
+      await printHtmlInBrowser(html);
     } finally {
       setExportingId(null);
     }

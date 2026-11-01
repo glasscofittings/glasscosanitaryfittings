@@ -13,6 +13,9 @@ import AccountCombobox from "@/components/ui/AccountCombobox";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
 import type { Party } from "@/lib/supabase/crm";
 import { capitalizeFirst } from "@/lib/utils";
+import { useAuth } from "@/components/providers/AuthProvider";
+import DateTimeEditField from "@/components/shared/DateTimeEditField";
+import { setDocumentDateTime, toLocalInputValue, fromLocalInputValue } from "@/lib/supabase/document-datetime";
 
 interface LineDraft {
   key: string;
@@ -30,8 +33,20 @@ interface Props {
 }
 
 export default function EditJournalEntryModal({ entry, accounts, open, onClose, onSaved }: Props) {
+  const { profile } = useAuth();
   // State is initialized from `entry`; the parent remounts via `key={entry.id}`.
-  const [entryDate, setEntryDate] = useState(entry?.entry_date?.slice(0, 10) ?? "");
+  // Date/time starts from created_at, but its date part must equal entry_date —
+  // if they differ, keep entry_date and take the time-of-day from created_at.
+  const initialDateTime = (() => {
+    const created = entry?.created_at ? toLocalInputValue(entry.created_at) : "";
+    const datePart = entry?.entry_date?.slice(0, 10) ?? "";
+    if (!created) return datePart ? `${datePart}T00:00` : "";
+    if (datePart && created.slice(0, 10) !== datePart) return `${datePart}T${created.slice(11, 16)}`;
+    return created;
+  })();
+  const [dateTime, setDateTime] = useState(initialDateTime);
+  const [dtReason, setDtReason] = useState("");
+  const dateTimeChanged = dateTime !== initialDateTime;
   const [narration, setNarration] = useState(entry?.narration ?? "");
   const [customerName, setCustomerName] = useState(entry?.customer_name ?? "");
   const [customerParty, setCustomerParty] = useState<Party | null>(null);
@@ -86,6 +101,10 @@ export default function EditJournalEntryModal({ entry, accounts, open, onClose, 
       setError(`"${customerName.trim()}" is not a CRM contact. Pick one from the list, or add it in CRM first.`);
       return;
     }
+    if (dateTimeChanged && !dtReason.trim()) {
+      setError("A reason is required to change the date/time.");
+      return;
+    }
 
     const filtered = lines
       .filter((l) => l.account_id)
@@ -111,7 +130,7 @@ export default function EditJournalEntryModal({ entry, accounts, open, onClose, 
     setError(null);
 
     const okMeta = await updateJournalEntry(entry.id, {
-      entry_date: entryDate,
+      entry_date: dateTime.slice(0, 10),
       narration: narration.trim(),
       customer_name: customerName.trim() || null,
       is_balanced: filtered.length > 0 && isBalanced,
@@ -120,6 +139,21 @@ export default function EditJournalEntryModal({ entry, accounts, open, onClose, 
       setSaving(false);
       setError("Failed to update journal entry metadata.");
       return;
+    }
+
+    if (dateTimeChanged) {
+      const dtResult = await setDocumentDateTime({
+        docType: "JOURNAL",
+        id: entry.id,
+        at: fromLocalInputValue(dateTime),
+        reason: dtReason.trim(),
+        operator: profile?.email || "Terminal Operator",
+      });
+      if (!dtResult.ok) {
+        setSaving(false);
+        setError(dtResult.error ?? "Failed to update the entry date/time.");
+        return;
+      }
     }
 
     await deleteJournalLines(entry.id);
@@ -166,10 +200,13 @@ export default function EditJournalEntryModal({ entry, accounts, open, onClose, 
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-caption text-secondary uppercase tracking-wider font-medium block mb-1.5">Date</label>
-                <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className={inputCls} />
-              </div>
+              <DateTimeEditField
+                value={dateTime}
+                onChange={setDateTime}
+                reason={dtReason}
+                onReasonChange={setDtReason}
+                changed={dateTimeChanged}
+              />
               <div>
                 <label className="text-caption text-secondary uppercase tracking-wider font-medium block mb-1.5">Remarks *</label>
                 <textarea

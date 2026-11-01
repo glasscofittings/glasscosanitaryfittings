@@ -18,6 +18,7 @@ import {
 import CrimsonButton from "@/components/ui/CrimsonButton";
 import GlassCard from "@/components/ui/GlassCard";
 import { formatPKR } from "@/lib/utils/formatters";
+import { formatDateTimePKT } from "@/lib/supabase/document-datetime";
 import {
   type Quotation,
   type QuotationStatus,
@@ -333,7 +334,13 @@ export default function QuotationsPage() {
                       <td className="px-4 py-3 font-mono font-bold text-foreground">
                         {q.quotation_number}
                       </td>
-                      <td className="px-4 py-3 text-muted">{fmtDate(q.quotation_date)}</td>
+                      <td className="px-4 py-3 text-muted">
+                        {fmtDate(q.quotation_date)}
+                        {(() => {
+                          const time = formatDateTimePKT(q.created_at).split(", ")[1];
+                          return time ? <div className="text-[10px] opacity-70">{time}</div> : null;
+                        })()}
+                      </td>
                       <td className="px-4 py-3 text-muted">{fmtDate(q.valid_until)}</td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-foreground">{q.customer_name}</div>

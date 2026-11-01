@@ -16,6 +16,7 @@ import {
 import NewJournalEntryModal from "@/components/modules/ledger/NewJournalEntryModal";
 import EditJournalEntryModal from "@/components/modules/ledger/EditJournalEntryModal";
 import { formatPKR } from "@/lib/utils/formatters";
+import { formatDateTimePKT } from "@/lib/supabase/document-datetime";
 import {
   exportLedgerReportPDF,
   exportJournalPDF,
@@ -484,6 +485,10 @@ export default function LedgerPage() {
                     <span className="font-mono text-body text-foreground">{entry.entry_number}</span>
                     <span className="text-caption text-muted">
                       {new Date(entry.entry_date).toLocaleDateString("en-PK", { year: "numeric", month: "short", day: "numeric" })}
+                      {(() => {
+                        const time = formatDateTimePKT(entry.created_at).split(", ")[1];
+                        return time ? ` · ${time}` : "";
+                      })()}
                     </span>
                     <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${entry.status === "POSTED" ? "bg-status-optimal/15 text-status-optimal" : "bg-status-amber/15 text-status-amber"}`}>
                       {entry.status}

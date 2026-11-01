@@ -1,4 +1,5 @@
 import { printPdfDocument } from "@/lib/tauri-bridge";
+import { PRINT_HEAD_META, PRINT_BASE_CSS, printHtmlInBrowser } from "@/lib/print-html";
 import {
   DEFAULT_COMPANY,
   getExportDocumentTitle,
@@ -1759,11 +1760,12 @@ export function generateInvoiceHTML(
 
   return `
     <!DOCTYPE html>
-    <html lang="en"><head><meta charset="utf-8">
+    <html lang="en"><head><meta charset="utf-8">${PRINT_HEAD_META}
     <title>${esc(invoice.invoice_number)}</title>
     <style>
       ${SANS_FONT_FACES_CSS}
       *{box-sizing:border-box;}
+      ${PRINT_BASE_CSS}
       html,body{margin:0;padding:0;background:#eef1f5;}
       body{font-family:${SANS_FONT_FAMILY_CSS};color:#09090b;font-size:11px;font-weight:600;line-height:1.4;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
       .sheet{position:relative;width:210mm;min-height:297mm;margin:10px auto;background:#fff;padding:11mm 12mm 9mm;display:flex;flex-direction:column;box-shadow:0 6px 26px rgba(15,23,42,.18);}
@@ -1821,7 +1823,7 @@ export function generateInvoiceHTML(
         /* Reserve the REAL page area (100vh in print = paper minus @page
            margins), not a hard 297mm: on Letter or with dialog/printer margins
            a rigid 297mm sheet overflows the page and orphans the footer. */
-        .sheet{margin:0;box-shadow:none;min-height:100vh;}
+        .sheet{margin:0;box-shadow:none;min-height:max(100vh,265mm);}
         *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
         a[href]:after{content:none!important;}
       }
@@ -1928,41 +1930,9 @@ export async function triggerPrint(
     }
   }
 
-  // Browser fallback: inject HTML into a hidden iframe and trigger print
-  return new Promise((resolve) => {
-    try {
-      const iframe = document.createElement("iframe");
-      iframe.style.cssText =
-        "position:fixed;right:0;bottom:0;width:0;height:0;border:none;";
-      document.body.appendChild(iframe);
-      const doc = iframe.contentWindow?.document;
-      if (!doc) {
-        document.body.removeChild(iframe);
-        resolve({ success: false, message: "Could not open print frame" });
-        return;
-      }
-      doc.open();
-      doc.write(html);
-      doc.close();
-      iframe.contentWindow?.focus();
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        setTimeout(() => {
-          try {
-            document.body.removeChild(iframe);
-          } catch {
-            /* already removed */
-          }
-          resolve({ success: true, message: "Print dialog opened" });
-        }, 1000);
-      }, 500);
-    } catch (err) {
-      resolve({
-        success: false,
-        message: err instanceof Error ? err.message : "Print failed",
-      });
-    }
-  });
+  // Browser fallback: print through a full-size off-screen iframe (handles
+  // fonts/images before printing; safe on Android Chrome).
+  return printHtmlInBrowser(html);
 }
 
 // ============================================================================

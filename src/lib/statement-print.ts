@@ -3,6 +3,7 @@ import { balanceSide } from "@/lib/party-statement";
 import { getExportDocumentTitle } from "@/lib/company-settings";
 import { SANS_FONT_FACES_CSS, SANS_FONT_FAMILY_CSS } from "@/lib/pdf-font";
 import { UR, URDU_HTML_STYLES, urSpan, urUnder } from "@/lib/pdf-urdu";
+import { PRINT_HEAD_META, PRINT_BASE_CSS } from "@/lib/print-html";
 
 /** PKR amount with the non-breaking space Rs glue so the symbol never splits from the figure. */
 function amount(value: number): string {
@@ -222,12 +223,13 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8">${PRINT_HEAD_META}
   <title>${escText(statementTitle)} - ${escText(target.name)}</title>
   <style>
     ${URDU_HTML_STYLES}
     ${SANS_FONT_FACES_CSS}
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    ${PRINT_BASE_CSS}
     html, body { background: #eef1f5; }
     body { font-family: ${SANS_FONT_FAMILY_CSS}; color: #09090b; font-size: 11px; font-weight: 400; line-height: 1.35; }
     .sheet { width: 190mm; min-height: 277mm; margin: 10mm auto; background: #fff; box-shadow: 0 6px 26px rgba(15,23,42,.15); display: flex; flex-direction: column; }

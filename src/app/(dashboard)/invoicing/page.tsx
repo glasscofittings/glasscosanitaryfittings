@@ -21,6 +21,7 @@ import { formatBytes } from "@/lib/backup-exporter";
 import { formatPKR } from "@/lib/utils/formatters";
 import { getExportCompanyName, loadCompanyProfile } from "@/lib/company-settings";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
+import { printHtmlInBrowser } from "@/lib/print-html";
 
 export default function InvoicingPage() {
   const [customers, setCustomers] = useState<Party[]>([]);
@@ -664,27 +665,7 @@ function SlipInvoiceModal({
 
   function handleBrowserPrint() {
     const html = generateSlipInvoiceHTML(invoice);
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "none";
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow?.document;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-      iframe.contentWindow?.focus();
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(iframe), 1000);
-      }, 500);
-    } else {
-      document.body.removeChild(iframe);
-    }
+    return printHtmlInBrowser(html);
   }
 
   return (
