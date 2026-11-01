@@ -308,7 +308,7 @@ export default function EditDispatchModal({ record, open, onClose, onSaved }: Pr
                 <div className="flex justify-between text-body font-semibold">
                   <span className="text-foreground">Grand Total</span>
                   <span className="font-mono text-num-kpi text-crimson-primary">
-                    {formatPKR(pending ? total : record.total_invoice_value_pkr)}
+                    {formatPKR(record.total_invoice_value_pkr)}
                   </span>
                 </div>
               </div>
