@@ -5,8 +5,6 @@ import { formatPKR } from "@/lib/utils/formatters";
 import type { JournalEntryWithLines } from "@/lib/supabase/ledger";
 import { getAccountLedger, type AccountLedgerLine } from "@/lib/supabase/ledger";
 import { exportPartyLedgerPDF } from "@/lib/pdf-exporter";
-import { translateBatchToUrdu } from "@/lib/geminiTranslator";
-import { UR } from "@/lib/pdf-urdu";
 import { getExportCompanyName } from "@/lib/company-settings";
 import { COMPANY_HEADER, COMPANY_LEGAL_NAME } from "@/lib/branding";
 import { formatStatementDate, generateStatementHTML } from "@/lib/statement-print";
@@ -397,10 +395,6 @@ export default function IndividualLedgerModal({
   const closingLabel = isPartyTarget
     ? balanceAmountLabel(target.party_type, closingBalance)
     : "Net Closing Balance";
-  const closingUrLabel =
-    closingLabel === "Amount Payable" ? UR.amountPayable
-    : closingLabel === "Amount Receivable" ? UR.amountReceivable
-    : UR.netClosingBalance;
   /** Control account actually presented (AP for suppliers, AR for customers). */
   const effectiveAccountCode = partyControlCode || target.account_code || "—";
   const conventionNote =
@@ -442,22 +436,6 @@ export default function IndividualLedgerModal({
   async function handlePrintStatement() {
     if (!target || printing) return;
 
-    // Batch-translate accounting narrations to Urdu before generating the document.
-    // Falls back to the original English text when the Gemini key is missing or the call fails.
-    setPrinting(true);
-    let translatedNarrations: string[];
-    try {
-      translatedNarrations = await translateBatchToUrdu(periodTransactions.map((tx) => tx.narration));
-    } finally {
-      setPrinting(false);
-    }
-
-    const urduNarration = (index: number): string | undefined => {
-      const source = periodTransactions[index]?.narration;
-      const translated = translatedNarrations[index];
-      return source && translated && translated !== source ? translated : undefined;
-    };
-
     const periodLabel = startDate || endDate
       ? `${startDate ? formatStatementDate(startDate) : "Inception"} to ${endDate ? formatStatementDate(endDate) : "Present"}`
       : "All Recorded Transactions";
@@ -473,14 +451,12 @@ export default function IndividualLedgerModal({
         debit: tx.debit,
         credit: tx.credit,
         balance: tx.balance,
-        urduNarration: urduNarration(idx),
       })),
       openingBalance,
       periodDebit,
       periodCredit,
       closingBalance,
       closingLabel,
-      closingUrLabel,
       conventionNote,
     });
 

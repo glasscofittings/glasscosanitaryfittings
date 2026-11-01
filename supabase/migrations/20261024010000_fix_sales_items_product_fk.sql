@@ -83,11 +83,12 @@ END $$;
 -- Only exact, unique name matches are adopted. Duplicate display names are
 -- skipped on purpose: silently picking one would reintroduce the wrong-product
 -- deduction this migration exists to prevent.
+-- min() has no uuid overload in PostgreSQL, so aggregate as text and cast back.
 UPDATE public.sales_invoice_items si
 SET product_id = sub.id
 FROM (
   SELECT lower(trim(name)) AS name_key,
-         min(id)           AS id
+         min(id::text)::uuid AS id
   FROM public.sanitary_products
   GROUP BY lower(trim(name))
   HAVING count(*) = 1

@@ -1,5 +1,9 @@
 import { printPdfDocument } from "@/lib/tauri-bridge";
-import { PRINT_HEAD_META, PRINT_BASE_CSS, printHtmlInBrowser } from "@/lib/print-html";
+import {
+  PRINT_HEAD_META,
+  PRINT_BASE_CSS,
+  printHtmlInBrowser,
+} from "@/lib/print-html";
 import {
   DEFAULT_COMPANY,
   getExportDocumentTitle,
@@ -629,7 +633,9 @@ export async function updateInvoiceItems(
         { headers: headers() },
       );
       if (flagRes.ok) {
-        const rows = (await flagRes.json()) as Array<{ stock_deducted?: boolean | null }>;
+        const rows = (await flagRes.json()) as Array<{
+          stock_deducted?: boolean | null;
+        }>;
         stockSettled = Array.isArray(rows) && rows[0]?.stock_deducted === true;
       }
     } catch (err) {
@@ -763,9 +769,7 @@ async function removeSalesInvoiceJournal(
  * Reads sales_invoices.stock_deducted (migration 20261107010000). Missing
  * column or failed reads report false, so nothing is ever reversed twice.
  */
-async function readStockSettled(
-  invoiceId: string,
-): Promise<boolean> {
+async function readStockSettled(invoiceId: string): Promise<boolean> {
   if (!SUPABASE_URL) return false;
   try {
     const res = await fetch(
@@ -773,7 +777,9 @@ async function readStockSettled(
       { headers: headers() },
     );
     if (!res.ok) return false;
-    const rows = (await res.json()) as Array<{ stock_deducted?: boolean | null }>;
+    const rows = (await res.json()) as Array<{
+      stock_deducted?: boolean | null;
+    }>;
     return Array.isArray(rows) && rows[0]?.stock_deducted === true;
   } catch (err) {
     console.warn("Could not read stock_deducted:", err);
@@ -1482,7 +1488,10 @@ export async function postInvoiceWithLedger(
       }
 
       const journalOk = await createJournalEntry({
-        entry_date: new Date().toISOString().slice(0, 10),
+        // Use the invoice's own date so the ledger entry matches the invoice.
+        entry_date: invoice.created_at
+          ? invoice.created_at.slice(0, 10)
+          : new Date().toISOString().slice(0, 10),
         narration,
         customer_name: invoice.parties?.name || undefined,
         customer_id: invoice.customer_id,
@@ -1814,7 +1823,7 @@ export function generateInvoiceHTML(
       .sig{width:46%;text-align:center;font-size:10.5px;font-weight:600;color:#09090b;}
       /*------------------------------------------------------------- Footer -------------------------------------------------*/
       .footer{margin-top:12px;text-align:center;page-break-inside:avoid;}
-      .footer .legal{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
+      .footer .legal{font-size:14.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#18181b;}
       .footer .contact-line{font-size:9.5px;font-weight:400;color:#09090b;margin-top:2px;}
       .footer .social-line{margin-top:1px;}
       @page{size:A4 portrait;margin:0;}
@@ -2067,7 +2076,10 @@ export async function createDispatchRecord(record: {
 
   const insert = async (
     payload: Record<string, unknown>,
-  ): Promise<{ ok: true; row: DispatchRecord | null } | { ok: false; status: number; message: string }> => {
+  ): Promise<
+    | { ok: true; row: DispatchRecord | null }
+    | { ok: false; status: number; message: string }
+  > => {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/dispatch_records`, {
       method: "POST",
       headers: { ...headers(), Prefer: "return=representation" },
@@ -2199,8 +2211,9 @@ export async function approveDispatch(
         code?: string;
       };
       const reason =
-        [message, details, hint, code].find((part) => typeof part === "string" && part.trim()) ??
-        (text.trim() ? text.trim().slice(0, 300) : "");
+        [message, details, hint, code].find(
+          (part) => typeof part === "string" && part.trim(),
+        ) ?? (text.trim() ? text.trim().slice(0, 300) : "");
       console.error("Supabase Error [approve_dispatch RPC]:", {
         status: res.status,
         reason: reason || `(empty response body, HTTP ${res.status})`,
@@ -2228,7 +2241,8 @@ export async function approveDispatch(
       status: (data.status as DispatchStatus) ?? "approved",
       alreadyApproved: data.already_approved === true,
       invoiceNumber: data.invoice_number,
-      totalPayable: typeof data.total_payable === "number" ? data.total_payable : undefined,
+      totalPayable:
+        typeof data.total_payable === "number" ? data.total_payable : undefined,
     };
   } catch (err) {
     console.error(
