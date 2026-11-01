@@ -26,7 +26,7 @@ export const DEFAULT_COMPANY: CompanyProfile = {
   facebook: "glasscosanitary",
   instagram: "glasscosanitary",
   whatsapp: "",
-  ntn: "1234567-8",
+  ntn: "",
   logo: "",
 };
 
