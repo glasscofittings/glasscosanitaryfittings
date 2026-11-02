@@ -728,7 +728,7 @@ async function removeSalesInvoiceJournal(
 ): Promise<boolean> {
   if (!SUPABASE_URL) return false;
   try {
-    const pattern = encodeURIComponent(`*${invoiceNumber}*`);
+    const pattern = encodeURIComponent(`Sales invoice ${invoiceNumber} posted*`);
     const jeRes = await fetch(
       `${SUPABASE_URL}/rest/v1/journal_entries?status=eq.POSTED&narration=ilike.${pattern}&select=id`,
       { headers: headers() },
@@ -797,6 +797,45 @@ async function readStockSettled(invoiceId: string): Promise<boolean> {
  * pending-approval invoices never moved stock, so deleting them must not
  * inflate inventory.
  */
+
+export async function resyncInvoiceJournal(
+  invoiceId: string,
+): Promise<{ ok: boolean; synced: boolean; error?: string }> {
+  if (!SUPABASE_URL) return { ok: false, synced: false, error: "Server URL is not configured" };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/resync_invoice_journal`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ p_invoice_id: invoiceId }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const message =
+        (err as { message?: string })?.message ||
+        `Failed to re-sync invoice ledger (HTTP ${res.status})`;
+      console.error("Supabase Error [resync_invoice_journal RPC]:", {
+        status: res.status,
+        message,
+      });
+      return { ok: false, synced: false, error: message };
+    }
+
+    const data = (await res.json()) as { synced?: boolean };
+    return { ok: true, synced: data?.synced === true };
+  } catch (err) {
+    console.error(
+      "Supabase Error [resync_invoice_journal RPC]:",
+      err instanceof Error ? err.message : err,
+    );
+    return {
+      ok: false,
+      synced: false,
+      error: err instanceof Error ? err.message : "Network error",
+    };
+  }
+}
+
 export async function deleteInvoice(invoice: {
   id: string;
   invoice_number: string;
@@ -1415,7 +1454,7 @@ async function findSalesInvoiceJournal(
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/journal_entries?narration=ilike.${encodeURIComponent(
-        `*${invoiceNumber}*`,
+        `Sales invoice ${invoiceNumber} posted*`,
       )}&select=id&limit=1`,
       { headers: headers() },
     );

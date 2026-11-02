@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useEscapeToClose } from "@/hooks/useEscapeToClose";
-import { type Party, type SalesInvoice, type DispatchLineItem, updateInvoice, updateInvoiceItems } from "@/lib/supabase/invoicing";
+import { type Party, type SalesInvoice, type DispatchLineItem, updateInvoice, updateInvoiceItems, resyncInvoiceJournal } from "@/lib/supabase/invoicing";
 import { formatPKR } from "@/lib/utils/formatters";
 import { useAuth } from "@/components/providers/AuthProvider";
 import DateTimeEditField from "@/components/shared/DateTimeEditField";
@@ -215,6 +215,12 @@ export default function EditInvoiceModal({ invoice, customers, open, onClose, on
           setError(msg);
           return;
         }
+      }
+      const sync = await resyncInvoiceJournal(invoice.id);
+      if (!sync.ok) {
+        setError("Invoice saved, but the ledger could not be updated: " + sync.error + ". Press Save again to retry.");
+        onSaved();
+        return;
       }
       await queryClient.invalidateQueries({ queryKey: ["invoices"] });
       onSaved();
