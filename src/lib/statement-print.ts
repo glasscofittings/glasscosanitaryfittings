@@ -9,19 +9,16 @@ function amount(value: number): string {
   return formatPKR(value);
 }
 
-/** Money cell: strictly single-line tabular figures, auto-shrinking for very long amounts. */
-function moneyCell(html: string, rawLength = html.length): string {
-  const tier = rawLength >= 22 ? " xtight" : rawLength > 17 ? " tight" : "";
-  return `<td class="num${tier}">${html}</td>`;
+/** Money cell: strictly single-line tabular figures. */
+function moneyCell(html: string): string {
+  return `<td class="num">${html}</td>`;
 }
 
 /** Balance cell: amount + small Dr/Cr suffix, sized so the pair never wraps. */
 function balanceCell(balance: number): string {
   const side = balanceSide(balance);
-  const text = `${amount(Math.abs(balance))} ${side}`;
   return moneyCell(
     `${amount(Math.abs(balance))}<span class="side">${side}</span>`,
-    text.length,
   );
 }
 
@@ -253,20 +250,16 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
 
     tbody td { padding: 4px 8px; border-bottom: 2px solid #27292bff; font-size: 11px; font-weight: 600; color: #09090b; }
     table.stmt td + td { border-left: 2px solid #27292bff; }
-    tbody tr:nth-child(even) td  
-    tbody tr.opening td  font-weight: 600; border-bottom: 1px solid #27292bff; }
+    tbody tr.opening td { font-weight: 600; border-bottom: 1px solid #27292bff; }
     td.ctr { padding: 4px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; font-size: 11px; }
-    td.num { padding: 4px 5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 11px; line-height: 1.2; color: #09090b; }
+    td.num { padding: 4px 6px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 11px; line-height: 1.2; color: #09090b; }
     td.desc { overflow-wrap: anywhere; }
-   
-    td.num.tight { font-size: 8px; }
-    td.num.xtight { font-size: 7px; }
-    .side { font-size: 12px; font-weight: 600; color: #09090b; margin-left: 4px; }
+    .side { font-size: 11px; font-weight: 600; color: #09090b; margin-left: 4px; }
     td.empty { text-align: center; padding: 22px 8px; color: #09090b; }
 
-    tfoot td { background: #d8e2f4; font-weight: 800; font-size: 14px; border-top: 2px solid #0f172a; color: #09090b; }
+    tfoot td { background: #d8e2f4; font-weight: 800; font-size: 12px; border-top: 2px solid #0f172a; color: #09090b; }
     tfoot td.tlabel { padding: 10px 12px; }
-    tfoot td.num { font-weight: 600; }
+    tfoot td.num { font-weight: 700; font-size: 9px; }
 
     /* Bottom: disclaimer + receivable / payable callout */
     .bottom { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: flex-end; gap: 10mm; page-break-inside: avoid; }
@@ -316,7 +309,7 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
 
     <table class="stmt">
       <colgroup>
-        <col style="width:12%"><col style="width:12%"><col style="width:36%"><col style="width:13%"><col style="width:13%"><col style="width:14%">
+        <col style="width:11%"><col style="width:13%"><col style="width:32%"><col style="width:14%"><col style="width:14%"><col style="width:16%">
       </colgroup>
       <thead>
         <tr>
