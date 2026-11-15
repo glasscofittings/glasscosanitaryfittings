@@ -251,10 +251,10 @@ export function generateStatementHTML(input: StatementHTMLInput): string {
     tbody td { padding: 4px 8px; border-bottom: 2px solid #27292bff; font-size: 11px; font-weight: 600; color: #09090b; }
     table.stmt td + td { border-left: 2px solid #27292bff; }
     tbody tr.opening td { font-weight: 600; border-bottom: 1px solid #27292bff; }
-    td.ctr { padding: 4px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; font-size: 11px; }
-    td.num { padding: 4px 6px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 11px; line-height: 1.2; color: #09090b; }
+    td.ctr { padding: 4px 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; font-size: 9px; }
+    td.num { padding: 4px 6px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 9px; line-height: 1.2; color: #09090b; }
     td.desc { overflow-wrap: anywhere; }
-    .side { font-size: 11px; font-weight: 600; color: #09090b; margin-left: 4px; }
+    .side { font-size: 9px; font-weight: 600; color: #09090b; margin-left: 4px; }
     td.empty { text-align: center; padding: 22px 8px; color: #09090b; }
 
     tfoot td { background: #d8e2f4; font-weight: 800; font-size: 12px; border-top: 2px solid #0f172a; color: #09090b; }
